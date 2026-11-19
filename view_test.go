@@ -157,3 +157,28 @@ func TestHistoryDialogListsSavedRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestPastedURLSelectsItsSource(t *testing.T) {
+	a := testApp(t)
+
+	a.urlText = "https://www.piaotia.com/html/15/15709/"
+	a.detectSource()
+	if a.source.Kind != SourcePiaotian || !a.canParse() {
+		t.Fatalf("piaotian URL left source %v, canParse %v", a.source.Kind, a.canParse())
+	}
+	if a.urlText != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("address changed to %q", a.urlText)
+	}
+
+	a.urlText = "https://sto9.com/txt/13564/8169182.html"
+	a.detectSource()
+	if a.source.Kind != SourceSto9 || !a.canParse() {
+		t.Fatalf("sto9 URL left source %v, canParse %v", a.source.Kind, a.canParse())
+	}
+
+	a.urlText = "https://www.69shuba.com/book/90028.htm"
+	a.detectSource()
+	if a.source.Kind != SourceShuba69 || !a.canParse() {
+		t.Fatalf("69shuba URL left source %v, canParse %v", a.source.Kind, a.canParse())
+	}
+}

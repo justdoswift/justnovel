@@ -222,7 +222,7 @@ func (a *app) currentStep() string {
 	if a.canPause() || a.canResume() {
 		return "download"
 	}
-	if a.job.Phase == PhaseSessionRequired || a.session.State().Cookies > 0 {
+	if a.job.Phase == PhaseSessionRequired || (a.session != nil && a.session.State().Cookies > 0) {
 		return "sync"
 	}
 	return "open"
@@ -336,8 +336,12 @@ func (a *app) queueSection(c *ui.Context) {
 func (a *app) historySection(c *ui.Context) {
 	sectionLabel(c, "05", "HISTORY")
 
+	records := 0
+	if a.history != nil {
+		records = a.history.Count()
+	}
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
-		ui.Textf(c, "%d RECORDS", a.history.Count()).Font("monospace").FontSize(9).TextColor(textMuted)
+		ui.Textf(c, "%d RECORDS", records).Font("monospace").FontSize(9).TextColor(textMuted)
 		ui.Spacer(c)
 		textAction(c, "打开下载历史", textSoft, a.openHistory)
 	})
@@ -430,7 +434,7 @@ func (a *app) sourceBar(c *ui.Context) {
 		ui.Text(c, "GET").Font("monospace").FontSize(9).Bold().TextColor(mint).
 			Padding(4, 7).Radius(3).Background(mintDim)
 		ui.TextInput(c, &a.urlText).Placeholder(a.source.Placeholder).
-			Font("monospace").FontSize(10).Grow(1)
+			Font("monospace").FontSize(10).Grow(1).OnChange(a.detectSource)
 
 		names := make([]string, len(Sources))
 		for i, source := range Sources {
@@ -512,7 +516,7 @@ func railColor(phase JobPhase) ui.Color {
 func (a *app) railTitle() string {
 	switch a.job.Phase {
 	case PhaseFailed:
-		return "下载中断"
+		return "需要处理"
 	case PhasePaused:
 		return "下载已暂停"
 	case PhaseFinished:

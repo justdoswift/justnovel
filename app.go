@@ -120,6 +120,36 @@ func (a *app) resetSession() {
 	a.job = JobState{Phase: PhaseIdle}
 }
 
+// detectSource switches to the site the typed address belongs to, so a
+// pasted catalog URL works without choosing the site first.
+func (a *app) detectSource() {
+	if strings.TrimSpace(a.urlText) == "" {
+		return
+	}
+	if a.source.CatalogURL(a.urlText) != nil {
+		return
+	}
+	for _, candidate := range Sources {
+		if candidate.Kind == a.source.Kind {
+			continue
+		}
+		if candidate.CatalogURL(a.urlText) != nil {
+			a.adoptSource(candidate.Kind)
+			return
+		}
+	}
+}
+
+// adoptSource switches sites but keeps the address the user typed.
+func (a *app) adoptSource(kind SourceKind) {
+	if kind == a.source.Kind {
+		return
+	}
+	a.source = SourceFor(kind)
+	a.session.Configure(a.source)
+	a.resetSession()
+}
+
 // openSource shows the catalog page in the browser panel.
 func (a *app) openSource() {
 	page := a.source.CatalogURL(a.urlText)

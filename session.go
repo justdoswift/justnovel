@@ -55,9 +55,23 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 			s.mu.Lock()
 			loading, manual := s.loading, s.manual
 			s.mu.Unlock()
-			if loading && !manual {
-				s.set("页面已加载。确认内容后同步会话。", false)
+			if !loading || manual {
+				return
 			}
+			s.set("页面已加载。确认内容后同步会话。", false)
+
+			// A site that blocks the request answers with its own error page,
+			// which looks loaded; name it instead of letting the user try to
+			// sync a page that holds no catalog.
+			go func() {
+				text := strings.ToLower(s.eval("document.body ? document.body.innerText.slice(0, 600) : ''"))
+				for _, marker := range []string{"page not found", "403 forbidden", "access denied", "just a moment"} {
+					if strings.Contains(text, marker) {
+						s.set("站点返回了拦截页，请完成验证或更换站点。", false)
+						return
+					}
+				}
+			}()
 		})
 		view.Page().OnDidFailLoad(func(err *mygo.LoadError) {
 			s.mu.Lock()
