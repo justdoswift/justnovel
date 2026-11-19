@@ -141,14 +141,16 @@ func (s *browserSession) Sync(ctx context.Context) (html string, cookies []*http
 		agent = "JustNovel"
 	}
 
+	title := s.eval("document.title")
+	if title == "" {
+		title = s.source.SessionTitle
+	}
+
 	s.mu.Lock()
 	s.userAgent = agent
 	s.cookies = len(cookies)
 	s.loading = false
-	s.title = s.eval("document.title")
-	if s.title == "" {
-		s.title = s.source.SessionTitle
-	}
+	s.title = title
 	if len(cookies) == 0 {
 		s.status = "页面会话已同步。"
 	} else {

@@ -31,7 +31,6 @@ type app struct {
 	chapters []Chapter
 	next     int
 	running  bool
-	pausing  bool
 	cancel   context.CancelFunc
 	recordID string
 
@@ -70,14 +69,6 @@ func newApp() *app {
 // canParse reports whether the URL can be read.
 func (a *app) canParse() bool {
 	return a.source.CatalogURL(a.urlText) != nil && !a.job.Busy()
-}
-
-// canDownload reports whether a download can start.
-func (a *app) canDownload() bool {
-	if a.job.Busy() {
-		return false
-	}
-	return a.catalog != nil || a.running || a.job.Phase == PhasePaused || a.job.Phase == PhaseFailed
 }
 
 // canPause reports whether the running download can be paused.
@@ -120,7 +111,6 @@ func (a *app) resetSession() {
 		a.cancel = nil
 	}
 	a.running = false
-	a.pausing = false
 	a.catalog = nil
 	a.chapters = nil
 	a.next = 0
@@ -192,6 +182,22 @@ func (a *app) finishSyncErr(err error) {
 	})
 }
 
+// needsManualVerification reports whether the error means the user has to
+// solve the site's challenge in the browser panel.
+func needsManualVerification(err error) bool {
+	var sessionErr SessionError
+	if errors.As(err, &sessionErr) {
+		return true
+	}
+	message := err.Error()
+	for _, token := range []string{"Cloudflare", "挑战页", "站点拦截", "完成验证", "站点 Cookie"} {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	return false
+}
+
 // keepEditableMetadata carries the user's export settings over to a freshly
 // parsed catalog.
 func (a *app) keepEditableMetadata(parsed BookCatalog) {
@@ -255,7 +261,6 @@ func (a *app) launchDownload() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.running = true
-	a.pausing = false
 	a.stopping.Store(false)
 	a.job = JobState{Phase: PhaseStarting}
 
@@ -314,6 +319,7 @@ func (a *app) downloadLoop(ctx context.Context, crawler *Crawler, catalog BookCa
 			a.chapters = slices.Clone(done)
 			a.next = i + 1
 			a.recordID = recordID
+			a.awaiting = false
 			a.job = JobState{Phase: PhaseDownloading, Snap: &Progress{
 				Completed: completed, Total: total,
 				CurrentTitle: chapter.Title, CurrentIndex: chapter.Order,
@@ -348,7 +354,6 @@ func (a *app) pause(done []Chapter, next int, transport Transport, catalog BookC
 	recordID = a.saveHistory(catalog, done, recordID)
 	a.win.Update(func() {
 		a.running = false
-		a.pausing = false
 		a.chapters = slices.Clone(done)
 		a.next = next
 		a.recordID = recordID
@@ -367,14 +372,12 @@ func (a *app) failDownload(err error, done []Chapter, next int, transport Transp
 	message := err.Error()
 	a.win.Update(func() {
 		a.running = false
-		a.pausing = false
 		a.chapters = slices.Clone(done)
 		a.next = next
 		a.recordID = recordID
 		a.cancel = nil
 
-		var sessionErr SessionError
-		if errors.As(err, &sessionErr) {
+		if needsManualVerification(err) {
 			a.awaiting = true
 		}
 		a.job = JobState{Phase: PhaseFailed,
@@ -393,7 +396,6 @@ func (a *app) pauseDownload() {
 	if !a.canPause() || a.cancel == nil {
 		return
 	}
-	a.pausing = true
 	a.cancel()
 }
 
@@ -414,7 +416,6 @@ func (a *app) stopDownload() {
 		a.cancel = nil
 	}
 	a.running = false
-	a.pausing = false
 	a.chapters = nil
 	a.next = 0
 	a.recordID = ""
