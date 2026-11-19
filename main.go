@@ -25,11 +25,12 @@ func main() {
 
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "JustNovel",
-			Width:           1280,
-			Height:          820,
-			MinWidth:        1180,
-			MinHeight:       760,
-			BackgroundColor: "#0b0b0f",
+			Width:           1240,
+			Height:          800,
+			MinWidth:        1080,
+			MinHeight:       720,
+			BackgroundColor: "#0b0b0d",
+			TitleBarStyle:   mygo.TitleBarHidden,
 			Hidden:          true,
 			Content:         ui.View(app.view),
 		})

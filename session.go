@@ -40,7 +40,7 @@ type browserSession struct {
 }
 
 func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *browserSession {
-	return &browserSession{
+	s := &browserSession{
 		win:       win,
 		view:      view,
 		source:    source,
@@ -48,6 +48,31 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 		title:     source.SessionTitle,
 		userAgent: "JustNovel",
 	}
+	if view != nil {
+		view.Page().OnDidFinishLoad(func() {
+			s.mu.Lock()
+			loading, manual := s.loading, s.manual
+			s.mu.Unlock()
+			if loading && !manual {
+				s.set("页面已加载。确认内容后同步会话。", false)
+			}
+		})
+		view.Page().OnDidFailLoad(func(err *mygo.LoadError) {
+			s.mu.Lock()
+			loading := s.loading
+			s.lastError = err.Description
+			s.mu.Unlock()
+			if loading {
+				s.set("页面加载失败，请重试。", false)
+			}
+		})
+		view.Page().OnPageTitleUpdated(func(e *mygo.TitleEvent) {
+			s.mu.Lock()
+			s.title = e.Title
+			s.mu.Unlock()
+		})
+	}
+	return s
 }
 
 func (s *browserSession) State() sessionView {

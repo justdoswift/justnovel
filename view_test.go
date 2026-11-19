@@ -19,7 +19,7 @@ func TestWindowShowsStatusAndSource(t *testing.T) {
 	a := testApp(t)
 	tt := ui.NewTester(a.view, 1280, 820)
 
-	for _, want := range []string{"JustNovel", "准备开始", "同步目录、下载章节、导出 EPUB", "浏览器会话", "69 书吧"} {
+	for _, want := range []string{"JustNovel", "准备开始", "网页小说 → EPUB", "浏览器会话", "69 书吧"} {
 		if !tt.HasText(want) {
 			t.Errorf("window does not show %q; texts: %q", want, tt.Texts())
 		}
@@ -96,7 +96,7 @@ func TestChaptersDialogRemovesAChapter(t *testing.T) {
 		t.Fatalf("chapter dialog missing; texts: %q", tt.Texts())
 	}
 
-	if err := tt.Click("删除"); err != nil {
+	if err := tt.Click("移除"); err != nil {
 		t.Fatal(err)
 	}
 	if len(a.chapters) != 1 || a.chapters[0].Order != 2 {
@@ -144,13 +144,13 @@ func TestHistoryDialogListsSavedRecords(t *testing.T) {
 	}
 
 	tt := ui.NewTester(a.view, 1280, 820)
-	if err := tt.Click("导出历史"); err != nil {
+	if err := tt.Click("下载历史"); err != nil {
 		t.Fatal(err)
 	}
 	if !a.showHistory {
 		t.Fatal("the history dialog did not open")
 	}
-	for _, want := range []string{"下载历史", "一本书", "1 / 2", "部分 EPUB", "删除记录", "导出文件"} {
+	for _, want := range []string{"下载历史", "一本书", "1 / 2", "部分 EPUB", "删除记录", "导出 EPUB"} {
 		if !tt.HasText(want) {
 			t.Errorf("history dialog missing %q; texts: %q", want, tt.Texts())
 		}

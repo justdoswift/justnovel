@@ -34,8 +34,9 @@ type app struct {
 	cancel   context.CancelFunc
 	recordID string
 
-	lastSaved string
-	awaiting  bool
+	lastSaved   string
+	awaiting    bool
+	pendingStop bool
 
 	// Draft of the export settings, edited in its dialog.
 	showExport   bool
@@ -450,6 +451,9 @@ func (a *app) openExportDialog() {
 		return
 	}
 	a.draft = a.catalog.Settings()
+	if trimParagraph(a.draft.FrontText) == "" {
+		a.draft.FrontText = defaultFrontPageBodyText
+	}
 	a.exportFont = a.draft.BodyFont.DisplayName()
 	a.showExport = true
 	a.refreshCoverPreview()
@@ -563,7 +567,7 @@ func (a *app) beginExport(settings ExportSettings, chapters []Chapter, recordID 
 		}
 
 		a.win.Update(func() {
-			a.lastSaved = "已导出到：" + path
+			a.lastSaved = path
 			a.job = after
 		})
 	}()
