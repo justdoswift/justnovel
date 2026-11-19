@@ -50,6 +50,13 @@ func (h *History) List() []HistoryRecord {
 	return out
 }
 
+// Count returns how many records are stored.
+func (h *History) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.records)
+}
+
 // Get returns one record.
 func (h *History) Get(id string) (HistoryRecord, bool) {
 	h.mu.Lock()

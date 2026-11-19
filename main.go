@@ -29,19 +29,18 @@ func main() {
 			Height:          800,
 			MinWidth:        1080,
 			MinHeight:       720,
-			BackgroundColor: "#0b0b0d",
+			BackgroundColor: "#090b0e",
 			TitleBarStyle:   mygo.TitleBarHidden,
 			Hidden:          true,
 			Content:         ui.View(app.view),
 		})
 		app.win = win
 
-		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#14141a"})
+		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#0b0f14"})
 		if err != nil {
 			log.Fatal(err)
 		}
 		app.session = newBrowserSession(win, view, app.source)
-		app.session.Open(app.source.Placeholder)
 		win.Show()
 	})
 

@@ -19,13 +19,13 @@ func TestWindowShowsStatusAndSource(t *testing.T) {
 	a := testApp(t)
 	tt := ui.NewTester(a.view, 1280, 820)
 
-	for _, want := range []string{"JustNovel", "准备开始", "网页小说 → EPUB", "浏览器会话", "69 书吧"} {
+	for _, want := range []string{"justnovel", "准备开始", "BROWSER", "69 书吧"} {
 		if !tt.HasText(want) {
 			t.Errorf("window does not show %q; texts: %q", want, tt.Texts())
 		}
 	}
-	if a.urlText != a.source.Placeholder {
-		t.Errorf("source field = %q, want the placeholder %q", a.urlText, a.source.Placeholder)
+	if a.urlText != "" {
+		t.Errorf("source field = %q, want an empty target", a.urlText)
 	}
 }
 
@@ -45,6 +45,7 @@ func TestInvalidURLShowsError(t *testing.T) {
 
 func TestOpenSourceWaitsForSession(t *testing.T) {
 	a := testApp(t)
+	a.urlText = a.source.Placeholder
 	tt := ui.NewTester(a.view, 1280, 820)
 
 	if err := tt.Click("打开目录"); err != nil {
@@ -75,8 +76,8 @@ func TestSourceSwitchResetsTheBook(t *testing.T) {
 	if a.catalog != nil || len(a.chapters) != 0 || a.next != 0 {
 		t.Error("switching sources kept the previous book")
 	}
-	if a.urlText != SourceFor(SourcePiaotian).Placeholder {
-		t.Errorf("URL text = %q", a.urlText)
+	if a.urlText != "" {
+		t.Errorf("URL text = %q, want an empty target after switching sources", a.urlText)
 	}
 }
 
@@ -102,7 +103,7 @@ func TestChaptersDialogRemovesAChapter(t *testing.T) {
 	if len(a.chapters) != 1 || a.chapters[0].Order != 2 {
 		t.Fatalf("chapters after delete = %v, want the second only", a.chapters)
 	}
-	if !tt.HasText("共 1 章") {
+	if !tt.HasText("1 CHAPTERS") {
 		t.Errorf("count not updated; texts: %q", tt.Texts())
 	}
 }
@@ -119,7 +120,7 @@ func TestExportDialogShowsSettings(t *testing.T) {
 	if !a.showExport {
 		t.Fatal("the export dialog did not open")
 	}
-	for _, want := range []string{"导出设置", "作者信息", "正文字体", "首页内容", "封面", "取消"} {
+	for _, want := range []string{"导出设置", "AUTHOR", "FONT", "FRONT PAGE", "COVER", "取消"} {
 		if !tt.HasText(want) {
 			t.Errorf("export dialog missing %q; texts: %q", want, tt.Texts())
 		}
@@ -144,7 +145,7 @@ func TestHistoryDialogListsSavedRecords(t *testing.T) {
 	}
 
 	tt := ui.NewTester(a.view, 1280, 820)
-	if err := tt.Click("下载历史"); err != nil {
+	if err := tt.Click("打开下载历史"); err != nil {
 		t.Fatal(err)
 	}
 	if !a.showHistory {

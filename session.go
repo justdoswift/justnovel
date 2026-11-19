@@ -19,6 +19,7 @@ type sessionView struct {
 	Loading   bool
 	Manual    bool
 	Cookies   int
+	Loaded    bool
 }
 
 // browserSession is the site's browser panel: it holds the page the user
@@ -35,6 +36,7 @@ type browserSession struct {
 	loading   bool
 	manual    bool
 	notified  bool
+	loaded    bool
 	cookies   int
 	userAgent string
 }
@@ -70,6 +72,11 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 			s.mu.Lock()
 			s.title = e.Title
 			s.mu.Unlock()
+
+			lowered := strings.ToLower(e.Title)
+			if strings.Contains(lowered, "page not found") || strings.Contains(lowered, "just a moment") {
+				s.set("站点返回了拦截页，请完成验证。", false)
+			}
 		})
 	}
 	return s
@@ -78,7 +85,8 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 func (s *browserSession) State() sessionView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return sessionView{Status: s.status, Title: s.title, LastError: s.lastError, Loading: s.loading, Manual: s.manual, Cookies: s.cookies}
+	return sessionView{Status: s.status, Title: s.title, LastError: s.lastError,
+		Loading: s.loading, Manual: s.manual, Cookies: s.cookies, Loaded: s.loaded}
 }
 
 func (s *browserSession) Configure(source Source) {
@@ -88,6 +96,7 @@ func (s *browserSession) Configure(source Source) {
 	s.status = "等待打开目录页"
 	s.lastError = ""
 	s.manual = false
+	s.loaded = false
 	s.mu.Unlock()
 }
 
@@ -112,6 +121,7 @@ func (s *browserSession) Open(page string) {
 	s.lastError = ""
 	s.manual = false
 	s.notified = false
+	s.loaded = true
 	s.status = "正在打开目录页，请确认页面正常显示。"
 	s.loading = true
 	s.mu.Unlock()
@@ -270,6 +280,9 @@ func (s *browserSession) LoadHTML(ctx context.Context, page string) (string, err
 	if s.view == nil {
 		return "", DownloadError{"浏览器会话不可用。"}
 	}
+	s.mu.Lock()
+	s.loaded = true
+	s.mu.Unlock()
 
 	if sameNavigation(s.eval("location.href"), page) {
 		html := s.eval("document.documentElement.outerHTML")

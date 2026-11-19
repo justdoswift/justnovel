@@ -61,7 +61,6 @@ func newApp() *app {
 	source := SourceFor(SourceShuba69)
 	return &app{
 		source:      source,
-		urlText:     source.Placeholder,
 		showBrowser: true,
 		job:         JobState{Phase: PhaseIdle},
 	}
@@ -100,7 +99,7 @@ func (a *app) selectSource(kind SourceKind) {
 		return
 	}
 	a.source = SourceFor(kind)
-	a.urlText = a.source.Placeholder
+	a.urlText = ""
 	a.session.Configure(a.source)
 	a.resetSession()
 }
