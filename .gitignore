@@ -1,0 +1,6 @@
+.build/
+.mygo/
+build/
+dist/
+justnovel
+.DS_Store
