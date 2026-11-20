@@ -25,6 +25,14 @@ type app struct {
 	urlText     string
 	showBrowser bool
 
+	// search is the query, its results, and whether it is running. Searching
+	// is how a book is found: the address field is only for pasting a link.
+	query       string
+	hits        []SearchHit
+	searching   bool
+	searchError string
+	hitScroll   ui.ListState
+
 	catalog *BookCatalog
 	job     JobState
 
@@ -37,6 +45,11 @@ type app struct {
 	lastSaved   string
 	awaiting    bool
 	pendingStop bool
+
+	// startedAt and startCount time the run, so the sheet can estimate what
+	// is left from the pace it has actually kept.
+	startedAt  time.Time
+	startCount int
 
 	// Draft of the export settings, edited in its dialog.
 	showExport   bool
@@ -54,6 +67,16 @@ type app struct {
 
 	showChapters bool
 
+	// log is the run's execution log, newest last: what the crawler did, in
+	// the order it did it. It is the main surface of the window.
+	log      []LogLine
+	logSeq   int
+	logState ui.ListState
+
+	// catalogScroll keeps the chapter table on the chapter in flight, and
+	// catalogScrollFor remembers which one it last followed.
+	catalogScroll    ui.ListState
+	catalogScrollFor int
 	stopping atomic.Bool
 }
 
@@ -61,7 +84,7 @@ func newApp() *app {
 	source := SourceFor(SourceShuba69)
 	return &app{
 		source:      source,
-		showBrowser: true,
+		showBrowser: false,
 		job:         JobState{Phase: PhaseIdle},
 	}
 }
@@ -69,6 +92,15 @@ func newApp() *app {
 // canParse reports whether the URL can be read.
 func (a *app) canParse() bool {
 	return a.source.CatalogURL(a.urlText) != nil && !a.job.Busy()
+}
+
+// canSync reports whether the browser has a settled page to read.
+func (a *app) canSync() bool {
+	if !a.canParse() || a.session == nil {
+		return false
+	}
+	state := a.session.State()
+	return state.Loaded && !state.Loading
 }
 
 // canPause reports whether the running download can be paused.
@@ -93,13 +125,17 @@ func (a *app) canExportSession() bool {
 	return len(a.chapters) > 0 && !a.job.Busy()
 }
 
-// selectSource switches the site, clearing the book.
+// selectSource switches the site, clearing the book. The address is kept when
+// it already belongs to the new site; otherwise it is filled with that site's
+// example, so switching never leaves an empty field to paste into again.
 func (a *app) selectSource(kind SourceKind) {
 	if kind == a.source.Kind || a.job.Busy() || a.running {
 		return
 	}
 	a.source = SourceFor(kind)
-	a.urlText = ""
+	if a.source.CatalogURL(a.urlText) == nil {
+		a.urlText = a.source.Example
+	}
 	a.session.Configure(a.source)
 	a.resetSession()
 }
@@ -150,16 +186,51 @@ func (a *app) adoptSource(kind SourceKind) {
 	a.resetSession()
 }
 
-// openSource shows the catalog page in the browser panel.
+// openSource opens the catalog and reads it in one step. The user pastes an
+// address and presses Enter; the browser only appears if the site demands a
+// human, and the catalog is read as soon as the page settles.
 func (a *app) openSource() {
 	page := a.source.CatalogURL(a.urlText)
 	if page == nil {
 		a.job = JobState{Phase: PhaseFailed, Message: a.source.InvalidText}
 		return
 	}
+	if a.job.Busy() {
+		return
+	}
+	a.urlText = page.String()
+	// Reopening the same catalog to finish a verification must not throw
+	// away the chapters already downloaded.
+	if a.catalog != nil && a.catalog.SourceURL == page.String() {
+		a.session.Open(page.String())
+		if len(a.chapters) == 0 {
+			a.job = JobState{Phase: PhaseCatalogReady, Message: fmt.Sprintf("目录已保留，共 %d 章。可重新同步或直接下载。", len(a.catalog.Chapters))}
+		}
+		return
+	}
 	a.resetSession()
+	a.logReset()
+	a.logf(LogInfo, "打开目录页", page.String())
+
+	// Read the catalog automatically once the page settles. The browser stays
+	// out of the way unless the site asks for a human.
+	a.session.OnLoaded(a.autoSync)
 	a.session.Open(page.String())
-	a.job = JobState{Phase: PhaseSessionRequired, Message: "在浏览器面板中确认目录页正常显示后点击“同步会话”。"}
+	a.job = JobState{Phase: PhaseParsing, Message: "正在读取目录…"}
+}
+
+// autoSync reads the catalog after the page loads, if it has not been read
+// already. It is what makes one paste enough.
+func (a *app) autoSync() {
+	a.win.Update(func() {
+		if a.job.Busy() || a.catalog != nil {
+			return
+		}
+		if !a.canParse() {
+			return
+		}
+		a.syncSession()
+	})
 }
 
 // syncSession reads the catalog through the browser's cookies.
@@ -173,7 +244,7 @@ func (a *app) syncSession() {
 		return
 	}
 
-	a.job = JobState{Phase: PhaseParsing}
+	a.win.Update(func() { a.job = JobState{Phase: PhaseParsing} })
 	source, session := a.source, a.session
 
 	go func() {
@@ -194,7 +265,7 @@ func (a *app) syncSession() {
 		}
 		a.win.Update(func() {
 			a.keepEditableMetadata(catalog)
-			a.job = JobState{Phase: PhaseFinished, Message: fmt.Sprintf("目录解析完成，共 %d 章。", len(a.catalog.Chapters))}
+			a.job = JobState{Phase: PhaseCatalogReady, Message: fmt.Sprintf("目录已就绪，共 %d 章。确认后开始下载。", len(a.catalog.Chapters))}
 			a.awaiting = false
 		})
 	}()
@@ -204,9 +275,13 @@ func (a *app) finishSyncErr(err error) {
 	a.win.Update(func() {
 		var sessionErr SessionError
 		if errors.As(err, &sessionErr) {
-			a.job = JobState{Phase: PhaseSessionRequired, Message: sessionErr.Message}
+			// The site wants a human: open the browser for them.
+			a.showBrowser = true
 			a.awaiting = true
+			a.logf(LogWarn, "需要人工验证", sessionErr.Message)
+			a.job = JobState{Phase: PhaseSessionRequired, Message: sessionErr.Message}
 		} else {
+			a.logf(LogError, "同步失败", err.Error())
 			a.job = JobState{Phase: PhaseFailed, Message: err.Error()}
 		}
 	})
@@ -251,20 +326,6 @@ func (a *app) keepEditableMetadata(parsed BookCatalog) {
 	a.catalog = &parsed
 }
 
-// toggleDownload starts, pauses or resumes the download.
-func (a *app) toggleDownload() {
-	switch {
-	case a.canPause():
-		a.pauseDownload()
-	case a.canResume():
-		a.resumeDownload()
-	case a.canExportSession():
-		a.openExportDialog()
-	default:
-		a.startDownload()
-	}
-}
-
 func (a *app) startDownload() {
 	if a.catalog == nil {
 		a.job = JobState{Phase: PhaseFailed, Message: "请先解析目录，再开始下载。"}
@@ -292,7 +353,16 @@ func (a *app) launchDownload() {
 	a.cancel = cancel
 	a.running = true
 	a.stopping.Store(false)
+	a.startedAt = time.Now()
+	a.startCount = len(done)
 	a.job = JobState{Phase: PhaseStarting}
+
+	if start == 0 {
+		a.logReset()
+		a.logf(LogInfo, "开始下载", fmt.Sprintf("%s · 共 %d 章", catalog.Title, len(catalog.Chapters)))
+	} else {
+		a.logf(LogInfo, "继续下载", fmt.Sprintf("从第 %d 章开始，已有 %d 章", start+1, len(done)))
+	}
 
 	crawler := NewCrawler(a.source, a.session.Agent(), catalog.SourceURL, a.session.Cookies(), a.session.LoadHTML)
 
@@ -305,8 +375,15 @@ func (a *app) downloadLoop(ctx context.Context, crawler *Crawler, catalog BookCa
 	transport := TransportSession
 
 	for i := start; i < total; i++ {
+		if a.stopping.Load() {
+			return
+		}
 		chapter := catalog.Chapters[i]
+		chapterStart := time.Now()
 		a.win.Update(func() {
+			if a.stopping.Load() {
+				return
+			}
 			a.job = JobState{Phase: PhaseDownloading, Snap: &Progress{
 				Completed: len(done), Total: total,
 				CurrentTitle: chapter.Title, CurrentIndex: chapter.Order,
@@ -318,6 +395,12 @@ func (a *app) downloadLoop(ctx context.Context, crawler *Crawler, catalog BookCa
 		content, used, err := crawler.FetchChapter(ctx, chapter, func(t Transport) {
 			transport = t
 			a.win.Update(func() {
+				if a.stopping.Load() {
+					return
+				}
+				if t == TransportBrowser {
+					a.logf(LogFallback, "切换到浏览器抓取", fmt.Sprintf("%03d  %s", chapter.Order, chapter.Title))
+				}
 				a.job = JobState{Phase: PhaseDownloading, Snap: &Progress{
 					Completed: len(done), Total: total,
 					CurrentTitle: chapter.Title, CurrentIndex: chapter.Order,
@@ -337,19 +420,26 @@ func (a *app) downloadLoop(ctx context.Context, crawler *Crawler, catalog BookCa
 			a.failDownload(err, done, i, transport, catalog, recordID)
 			return
 		}
+		if a.stopping.Load() {
+			return
+		}
 		transport = used
 		done = append(done, content)
 
-		if len(done)%10 == 0 || len(done) == total {
+		if len(done)%50 == 0 || len(done) == total {
 			recordID = a.saveHistory(catalog, done, recordID)
 		}
 
 		completed := len(done)
 		a.win.Update(func() {
+			if a.stopping.Load() {
+				return
+			}
 			a.chapters = slices.Clone(done)
 			a.next = i + 1
 			a.recordID = recordID
 			a.awaiting = false
+			a.logChapter(chapter.Order, chapter.Title, transport, time.Since(chapterStart))
 			a.job = JobState{Phase: PhaseDownloading, Snap: &Progress{
 				Completed: completed, Total: total,
 				CurrentTitle: chapter.Title, CurrentIndex: chapter.Order,
@@ -370,14 +460,44 @@ func (a *app) downloadLoop(ctx context.Context, crawler *Crawler, catalog BookCa
 	}
 
 	recordID = a.saveHistory(catalog, done, recordID)
+	if a.stopping.Load() {
+		return
+	}
+	if len(done) < total {
+		a.win.Update(func() {
+			if a.stopping.Load() {
+				return
+			}
+			a.running = false
+			a.chapters = slices.Clone(done)
+			a.next = total
+			a.recordID = recordID
+			if len(done) == 0 {
+				a.job = JobState{Phase: PhaseFinished, Message: "没有成功下载的章节，未生成 EPUB。"}
+				return
+			}
+			a.job = JobState{Phase: PhaseFinished, Message: fmt.Sprintf("已完成 %d / %d 章（跳过 %d 章），正在生成 EPUB。", len(done), total, total-len(done))}
+		})
+		if a.stopping.Load() || len(done) == 0 {
+			return
+		}
+		a.beginExport(catalog.Settings(), slices.Clone(done), recordID, JobState{Phase: PhaseFinished, Message: "EPUB 导出成功。"}, false)
+		return
+	}
 	a.win.Update(func() {
+		if a.stopping.Load() {
+			return
+		}
 		a.running = false
 		a.chapters = slices.Clone(done)
 		a.next = total
 		a.recordID = recordID
 		a.job = JobState{Phase: PhaseFinished, Message: fmt.Sprintf("已下载全部 %d 章，正在生成 EPUB。", total)}
 	})
-	a.beginExport(catalog.Settings(), slices.Clone(done), recordID, JobState{Phase: PhaseFinished, Message: "EPUB 导出成功。"})
+	if a.stopping.Load() {
+		return
+	}
+	a.beginExport(catalog.Settings(), slices.Clone(done), recordID, JobState{Phase: PhaseFinished, Message: "EPUB 导出成功。"}, false)
 }
 
 func (a *app) pause(done []Chapter, next int, transport Transport, catalog BookCatalog, recordID string) {
@@ -388,6 +508,7 @@ func (a *app) pause(done []Chapter, next int, transport Transport, catalog BookC
 		a.next = next
 		a.recordID = recordID
 		a.cancel = nil
+		a.logf(LogWarn, "已暂停", fmt.Sprintf("保留 %d / %d 章", len(done), len(catalog.Chapters)))
 		a.job = JobState{Phase: PhasePaused, Snap: &Progress{
 			Completed: len(done), Total: len(catalog.Chapters),
 			CurrentTitle: nextTitle(catalog, next), CurrentIndex: nextOrder(catalog, next),
@@ -410,8 +531,9 @@ func (a *app) failDownload(err error, done []Chapter, next int, transport Transp
 		if needsManualVerification(err) {
 			a.awaiting = true
 		}
+		a.logf(LogError, "下载中断", message)
 		a.job = JobState{Phase: PhaseFailed,
-			Message: "下载失败。你可以继续当前下载、跳过当前章、重新开始整次下载，或先导出已完成内容。\n" + message,
+			Message: "下载失败。你可以继续当前下载、跳过当前章、从头重下，或先导出已完成内容。\n" + message,
 			Snap: &Progress{
 				Completed: len(done), Total: len(catalog.Chapters),
 				CurrentTitle: nextTitle(catalog, next), CurrentIndex: nextOrder(catalog, next),
@@ -419,6 +541,14 @@ func (a *app) failDownload(err error, done []Chapter, next int, transport Transp
 				LastTitle: lastTitle(done), LastIndex: lastOrder(done), HasLast: len(done) > 0,
 			}}
 	})
+}
+
+// restartDownload discards the current run and starts the book again.
+func (a *app) restartDownload() {
+	if a.catalog == nil || a.running {
+		return
+	}
+	a.startDownload()
 }
 
 // pauseDownload pauses a running download, keeping what it downloaded.
@@ -446,6 +576,9 @@ func (a *app) stopDownload() {
 		a.cancel = nil
 	}
 	a.running = false
+	if a.catalog != nil && len(a.chapters) > 0 {
+		a.saveHistory(*a.catalog, a.chapters, a.recordID)
+	}
 	a.chapters = nil
 	a.next = 0
 	a.recordID = ""
@@ -523,7 +656,7 @@ func (a *app) confirmExport() {
 	a.showExport = false
 
 	a.beginExport(catalog.Settings(), slices.Clone(a.chapters), a.recordID,
-		JobState{Phase: PhaseFinished, Message: "EPUB 导出成功。"})
+		JobState{Phase: PhaseFinished, Message: "EPUB 导出成功。"}, true)
 }
 
 // importCover asks for an image and makes it the book's cover.
@@ -554,13 +687,15 @@ func (a *app) removeCover() {
 	a.coverPreview = nil
 }
 
-// beginExport builds the EPUB, asks where to save it and writes it.
-func (a *app) beginExport(settings ExportSettings, chapters []Chapter, recordID string, after JobState) {
+// beginExport builds the EPUB and writes it. A finished download saves
+// straight to Downloads; a manual export asks where to put the file.
+func (a *app) beginExport(settings ExportSettings, chapters []Chapter, recordID string, after JobState, askPath bool) {
 	if len(chapters) == 0 {
-		a.job = JobState{Phase: PhaseFailed, Message: "当前还没有可导出的章节。"}
+		a.win.Update(func() { a.job = JobState{Phase: PhaseFailed, Message: "当前还没有可导出的章节。"} })
 		return
 	}
-	a.job = JobState{Phase: PhaseBuilding}
+	a.win.Update(func() { a.job = JobState{Phase: PhaseBuilding} })
+	a.win.Update(func() { a.logf(LogInfo, "开始生成 EPUB", fmt.Sprintf("%d 章", len(chapters))) })
 	name := ExportFileName(settings.Title, len(chapters), settings.Total)
 
 	go func() {
@@ -570,36 +705,65 @@ func (a *app) beginExport(settings ExportSettings, chapters []Chapter, recordID 
 			return
 		}
 
-		defaultPath := filepath.Join(downloadsDir(), name)
-		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
-			Title:       "导出 EPUB",
-			DefaultPath: defaultPath,
-			Filters:     []mygo.FileFilter{{Name: "EPUB", Extensions: []string{"epub"}}},
-		})
-		if err != nil {
-			a.win.Update(func() { a.job = JobState{Phase: PhaseFailed, Message: "保存失败：" + err.Error()} })
-			return
-		}
-		if path == "" {
-			a.win.Update(func() { a.job = after })
-			return
+		path := uniqueDownloadPath(name)
+		if askPath {
+			chosen, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+				Title:       "导出 EPUB",
+				DefaultPath: path,
+				Filters:     []mygo.FileFilter{{Name: "EPUB", Extensions: []string{"epub"}}},
+			})
+			if err != nil {
+				a.win.Update(func() { a.job = JobState{Phase: PhaseFailed, Message: "保存失败：" + err.Error()} })
+				return
+			}
+			if chosen == "" {
+				a.win.Update(func() {
+					a.job = JobState{Phase: PhaseFinished, Message: "已取消导出。"}
+				})
+				return
+			}
+			path = chosen
 		}
 		if !strings.HasSuffix(strings.ToLower(path), ".epub") {
 			path += ".epub"
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			a.win.Update(func() { a.job = JobState{Phase: PhaseFailed, Message: "保存失败：" + err.Error()} })
+			return
 		}
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			a.win.Update(func() { a.job = JobState{Phase: PhaseFailed, Message: "保存失败：" + err.Error()} })
 			return
 		}
 		if recordID != "" && a.history != nil {
-			a.history.MarkExported(recordID, name)
+			a.history.MarkExported(recordID, filepath.Base(path))
 		}
 
 		a.win.Update(func() {
 			a.lastSaved = path
-			a.job = after
+			a.logf(LogDone, "EPUB 已导出", filepath.Base(path))
+			if askPath {
+				a.job = after
+			} else {
+				a.job = JobState{Phase: PhaseFinished, Message: "EPUB 已导出：" + filepath.Base(path)}
+			}
 		})
 	}()
+}
+
+// uniqueDownloadPath picks a Downloads path that does not overwrite an
+// earlier export.
+func uniqueDownloadPath(name string) string {
+	dir := downloadsDir()
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	path := filepath.Join(dir, name)
+	for i := 2; ; i++ {
+		if _, err := os.Stat(path); err != nil {
+			return path
+		}
+		path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, i, ext))
+	}
 }
 
 func downloadsDir() string {
@@ -671,7 +835,7 @@ func (a *app) exportHistory() {
 	}
 	a.showHistory = false
 	a.beginExport(settings, record.Chapters, record.ID,
-		JobState{Phase: PhaseFinished, Message: "历史 EPUB 导出成功。"})
+		JobState{Phase: PhaseFinished, Message: "历史 EPUB 导出成功。"}, true)
 }
 
 // deleteHistory removes the selected record.
@@ -717,6 +881,8 @@ func (a *app) statusDetail() string {
 	switch a.job.Phase {
 	case PhaseIdle:
 		return a.source.IdleDetail
+	case PhaseCatalogReady:
+		return a.job.Message
 	case PhaseSessionRequired:
 		return a.job.Message
 	case PhaseParsing:

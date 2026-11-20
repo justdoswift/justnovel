@@ -154,6 +154,70 @@ func TestCrawlerFallsBackToTheBrowser(t *testing.T) {
 	}
 }
 
+func TestCrawlerMergesTheCompleteCatalog(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/book/13564/index.html", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `<html><head><meta property="og:novel:book_name" content="腐朽世界"/></head><body>
+			<ul>
+			<li data-num="1"><a href="https://sto9.com/txt/13564/1.html">001 覺醒</a>
+			<li data-num="2"><a href="https://sto9.com/txt/13564/2.html">002 決斷</a>
+			</ul></body></html>`)
+	})
+	mux.HandleFunc("/ajax_novels/chapterlist/13564.html", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `<ul>
+			<li data-num="1"><a href="https://sto9.com/txt/13564/1.html">001 覺醒</a>
+			<li data-num="2"><a href="https://sto9.com/txt/13564/2.html">002 決斷</a>
+			<li data-num="3"><a href="https://sto9.com/txt/13564/3.html">003 搬家</a>
+			</ul>`)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	base := server.URL + "/book/13564/index.html"
+	crawler := NewCrawler(SourceFor(SourceSto9), "", base, nil, nil)
+	catalog, err := crawler.FetchCatalog(context.Background(), base, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Chapters) != 3 {
+		t.Fatalf("%d chapters, want the 3 of the complete list", len(catalog.Chapters))
+	}
+	if catalog.Chapters[2].Order != 3 || !strings.Contains(catalog.Chapters[2].Title, "搬家") {
+		t.Errorf("last chapter = %+v", catalog.Chapters[2])
+	}
+}
+
+func TestShuba69ForbiddenFallsBackImmediately(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/txt/90028/1", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "blocked", http.StatusForbidden)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	chapterHTML := `<html><body><h1>第一章 夜路</h1>
+		<div id="chaptercontent">第一段内容足够长，可以通过正文校验。<br/><br/>第二段内容也足够长，同样可以通过校验。<br/></div>
+		<div id="bottomlink"></div></body></html>`
+	browser := func(ctx context.Context, page string) (string, error) { return chapterHTML, nil }
+
+	crawler := NewCrawler(SourceFor(SourceShuba69), "", server.URL+"/book/90028/", nil, browser)
+	started := time.Now()
+	_, transport, err := crawler.FetchChapter(context.Background(), ChapterRef{
+		Title: "第一章 夜路",
+		URL:   server.URL + "/txt/90028/1",
+		Order: 1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transport != TransportBrowser {
+		t.Errorf("transport = %v, want the browser", transport)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("a 403 took %s, want an immediate browser fallback", elapsed)
+	}
+}
+
 func TestCrawlerRetriesRateLimits(t *testing.T) {
 	var hits atomic.Int32
 	var base string

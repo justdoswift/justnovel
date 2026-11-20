@@ -19,7 +19,7 @@ func TestWindowShowsStatusAndSource(t *testing.T) {
 	a := testApp(t)
 	tt := ui.NewTester(a.view, 1280, 820)
 
-	for _, want := range []string{"justnovel", "准备开始", "BROWSER", "69 书吧"} {
+	for _, want := range []string{"justnovel", "搜一本书", "69 书吧"} {
 		if !tt.HasText(want) {
 			t.Errorf("window does not show %q; texts: %q", want, tt.Texts())
 		}
@@ -31,34 +31,92 @@ func TestWindowShowsStatusAndSource(t *testing.T) {
 
 func TestInvalidURLShowsError(t *testing.T) {
 	a := testApp(t)
-	tt := ui.NewTester(a.view, 1280, 820)
 
 	a.urlText = "https://example.com/not-a-catalog"
-	tt.Frame()
-	if !tt.HasText(a.source.InvalidText) {
-		t.Errorf("invalid URL error missing; texts: %q", tt.Texts())
-	}
 	if a.canParse() {
 		t.Error("an invalid URL can be parsed")
 	}
+	a.openSource()
+	if a.job.Phase != PhaseFailed {
+		t.Fatalf("phase = %v, want failed for an invalid address", a.job.Phase)
+	}
+	if a.job.Message != a.source.InvalidText {
+		t.Errorf("message = %q, want %q", a.job.Message, a.source.InvalidText)
+	}
 }
 
-func TestOpenSourceWaitsForSession(t *testing.T) {
+// Opening a catalog reads it without asking for a second press, and the
+// browser stays out of the way until a site demands a human.
+func TestOpenSourceReadsTheCatalogInOneStep(t *testing.T) {
 	a := testApp(t)
-	a.urlText = a.source.Placeholder
-	tt := ui.NewTester(a.view, 1280, 820)
+	a.urlText = "https://www.69shuba.com/book/90028/"
 
-	if err := tt.Click("打开目录"); err != nil {
-		t.Fatal(err)
+	a.openSource()
+
+	if a.job.Phase != PhaseParsing {
+		t.Fatalf("phase = %v, want parsing right after opening", a.job.Phase)
 	}
-	if a.job.Phase != PhaseSessionRequired {
-		t.Fatalf("phase = %v, want session required", a.job.Phase)
+	if a.showBrowser {
+		t.Error("the browser panel opened although the site asked for nothing")
 	}
-	if !tt.HasText("等待站点会话") {
-		t.Errorf("status headline missing; texts: %q", tt.Texts())
+}
+
+func TestReopeningTheSameCatalogKeepsProgress(t *testing.T) {
+	a := testApp(t)
+	a.urlText = "https://www.69shuba.com/book/90028/"
+	a.catalog = &BookCatalog{
+		Title:     "一本书",
+		SourceURL: "https://www.69shuba.com/book/90028/",
+		Chapters:  []ChapterRef{{Title: "第一章", Order: 1}, {Title: "第二章", Order: 2}},
 	}
-	if !a.showBrowser {
-		t.Error("the browser panel is hidden after opening a catalog")
+	a.chapters = []Chapter{{Title: "第一章", Order: 1}}
+	a.next = 1
+
+	a.openSource()
+
+	if len(a.chapters) != 1 || a.catalog == nil || a.catalog.Title != "一本书" {
+		t.Fatalf("reopening the catalog lost the download: chapters=%d catalog=%v", len(a.chapters), a.catalog)
+	}
+	if a.job.Phase == PhaseSessionRequired {
+		t.Error("reopening the catalog reset the job to session required")
+	}
+}
+
+func TestOpenSourceNormalizesAChapterPage(t *testing.T) {
+	a := testApp(t)
+	a.source = SourceFor(SourcePiaotian)
+	a.session.Configure(a.source)
+	a.urlText = "https://www.piaotia.com/html/15/15709/11428790.html"
+
+	a.openSource()
+
+	if a.urlText != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("URL = %q, want the catalog page", a.urlText)
+	}
+	if a.job.Phase != PhaseParsing {
+		t.Errorf("phase = %v, want parsing right after opening", a.job.Phase)
+	}
+}
+
+func TestStopDownloadKeepsTheHistoryRecord(t *testing.T) {
+	a := testApp(t)
+	a.catalog = &BookCatalog{
+		Title:     "一本书",
+		Author:    "作者",
+		SourceURL: "https://www.69shuba.com/book/1/",
+		Chapters:  []ChapterRef{{Title: "第一章", Order: 1}, {Title: "第二章", Order: 2}},
+	}
+	a.chapters = []Chapter{{Title: "第一章", Order: 1, PlainText: "正文"}}
+	a.running = true
+	a.job = JobState{Phase: PhaseDownloading}
+
+	a.stopDownload()
+
+	if a.history.Count() != 1 {
+		t.Fatalf("history records = %d, want the stopped download saved", a.history.Count())
+	}
+	if len(a.chapters) != 0 || a.job.Phase != PhaseStopped {
+		t.Fatalf("stop left chapters=%d phase=%v", len(a.chapters), a.job.Phase)
 	}
 }
 
@@ -76,8 +134,13 @@ func TestSourceSwitchResetsTheBook(t *testing.T) {
 	if a.catalog != nil || len(a.chapters) != 0 || a.next != 0 {
 		t.Error("switching sources kept the previous book")
 	}
-	if a.urlText != "" {
-		t.Errorf("URL text = %q, want an empty target after switching sources", a.urlText)
+	// The field is filled with the new site's example rather than emptied, so
+	// switching never leaves the user with nothing to press Enter on.
+	if a.urlText != a.source.Example {
+		t.Errorf("URL text = %q, want the new site's example %q", a.urlText, a.source.Example)
+	}
+	if !a.canParse() {
+		t.Error("the address after switching sources cannot be opened")
 	}
 }
 
@@ -89,10 +152,8 @@ func TestChaptersDialogRemovesAChapter(t *testing.T) {
 	a.chapters = []Chapter{{Title: "第一章", Order: 1}, {Title: "第二章", Order: 2}}
 	a.job = JobState{Phase: PhaseFinished, Message: "完成"}
 
+	a.showChapters = true
 	tt := ui.NewTester(a.view, 1280, 820)
-	if err := tt.Click("查看已下载章节"); err != nil {
-		t.Fatal(err)
-	}
 	if !tt.HasText("已下载章节") || !tt.HasText("第一章") {
 		t.Fatalf("chapter dialog missing; texts: %q", tt.Texts())
 	}
@@ -103,7 +164,7 @@ func TestChaptersDialogRemovesAChapter(t *testing.T) {
 	if len(a.chapters) != 1 || a.chapters[0].Order != 2 {
 		t.Fatalf("chapters after delete = %v, want the second only", a.chapters)
 	}
-	if !tt.HasText("1 CHAPTERS") {
+	if !tt.HasText("1 章") {
 		t.Errorf("count not updated; texts: %q", tt.Texts())
 	}
 }
@@ -113,14 +174,12 @@ func TestExportDialogShowsSettings(t *testing.T) {
 	a.catalog = &BookCatalog{Title: "一本书", Author: "作者", SourceURL: "https://www.69shuba.com/book/1/", Chapters: []ChapterRef{{Title: "第一章", Order: 1}}}
 	a.chapters = []Chapter{{Title: "第一章", Order: 1}}
 
+	a.openExportDialog()
 	tt := ui.NewTester(a.view, 1280, 820)
-	if err := tt.Click("导出当前内容"); err != nil {
-		t.Fatal(err)
-	}
 	if !a.showExport {
 		t.Fatal("the export dialog did not open")
 	}
-	for _, want := range []string{"导出设置", "AUTHOR", "FONT", "FRONT PAGE", "COVER", "取消"} {
+	for _, want := range []string{"导出设置", "作者", "正文字体", "首页说明", "封面", "取消"} {
 		if !tt.HasText(want) {
 			t.Errorf("export dialog missing %q; texts: %q", want, tt.Texts())
 		}
@@ -145,7 +204,7 @@ func TestHistoryDialogListsSavedRecords(t *testing.T) {
 	}
 
 	tt := ui.NewTester(a.view, 1280, 820)
-	if err := tt.Click("打开下载历史"); err != nil {
+	if err := tt.Click("历史"); err != nil {
 		t.Fatal(err)
 	}
 	if !a.showHistory {
@@ -180,5 +239,41 @@ func TestPastedURLSelectsItsSource(t *testing.T) {
 	a.detectSource()
 	if a.source.Kind != SourceShuba69 || !a.canParse() {
 		t.Fatalf("69shuba URL left source %v, canParse %v", a.source.Kind, a.canParse())
+	}
+}
+
+// Switching the site fills the field with that site's address, so the user
+// never has to paste again after picking a different source.
+func TestSwitchingSourceFillsTheAddress(t *testing.T) {
+	a := testApp(t)
+	a.urlText = "https://www.69shuba.com/book/90028/"
+
+	a.selectSource(SourcePiaotian)
+	if a.urlText != a.source.Example {
+		t.Fatalf("address = %q, want the piaotian example %q", a.urlText, a.source.Example)
+	}
+	if !a.canParse() {
+		t.Error("the filled address cannot be opened")
+	}
+
+	a.selectSource(SourceSto9)
+	if a.urlText != a.source.Example {
+		t.Fatalf("address = %q, want the sto9 example %q", a.urlText, a.source.Example)
+	}
+	if !a.canParse() {
+		t.Error("the filled address cannot be opened")
+	}
+}
+
+// An address that already belongs to the new site is kept as it is.
+func TestSwitchingSourceKeepsAMatchingAddress(t *testing.T) {
+	a := testApp(t)
+	a.source = SourceFor(SourcePiaotian)
+	a.session.Configure(a.source)
+	a.urlText = "https://www.piaotia.com/html/15/15709/"
+
+	a.selectSource(SourcePiaotian)
+	if a.urlText != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("address = %q, want it left alone", a.urlText)
 	}
 }

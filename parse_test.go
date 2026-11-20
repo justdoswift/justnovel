@@ -198,10 +198,16 @@ func TestCatalogURLNormalization(t *testing.T) {
 	if got := SourceFor(SourceShuba69).CatalogURL("https://www.piaotia.com/html/15/15709/"); got != nil {
 		t.Error("piaotian URL accepted by 69shuba")
 	}
-	if got := SourceFor(SourcePiaotian).CatalogURL("https://www.piaotia.com/html/15/15709/"); got == nil {
-		t.Error("piaotian catalog URL rejected")
+	if got := SourceFor(SourcePiaotian).CatalogURL("https://www.piaotia.com/html/15/15709/"); got == nil || got.String() != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("piaotian catalog URL = %v", got)
 	}
-	if got := SourceFor(SourcePiaotian).CatalogURL("https://www.piaotia.com/html/15/15709/11428790.html"); got != nil {
-		t.Error("piaotian chapter URL accepted as a catalog")
+	if got := SourceFor(SourcePiaotian).CatalogURL("https://www.piaotia.com/html/15/15709/11428790.html"); got == nil || got.String() != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("piaotian chapter page normalized to %v, want the catalog", got)
+	}
+	if got := SourceFor(SourcePiaotian).CatalogURL("www.piaotia.com/html/15/15709/"); got == nil || got.String() != "https://www.piaotia.com/html/15/15709/" {
+		t.Errorf("scheme-less piaotian URL = %v, want https", got)
+	}
+	if got := SourceFor(SourceShuba69).CatalogURL("https://www.69shuba.com/txt/90028/41039597"); got == nil || got.String() != "https://www.69shuba.com/book/90028/" {
+		t.Errorf("69shuba chapter page normalized to %v, want the catalog", got)
 	}
 }

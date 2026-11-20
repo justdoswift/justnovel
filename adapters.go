@@ -727,7 +727,7 @@ func sto9Chapters(html string, base *url.URL) []ChapterRef {
 		return nil
 	}
 
-	matches := allMatches(`<li[^>]*data-num\s*=\s*["']?(\d+)["']?[^>]*>\s*<a[^>]+href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>\s*</li>`, html)
+	matches := allMatches(`<li[^>]*data-num\s*=\s*["']?(\d+)["']?[^>]*>\s*<a[^>]+href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>`, html)
 
 	byOrder := map[int]ChapterRef{}
 	orderByURL := map[string]int{}

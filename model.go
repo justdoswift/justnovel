@@ -217,6 +217,7 @@ type JobPhase int
 
 const (
 	PhaseIdle JobPhase = iota
+	PhaseCatalogReady
 	PhaseSessionRequired
 	PhaseParsing
 	PhaseStarting
@@ -239,6 +240,8 @@ type JobState struct {
 // Title is the headline of the status panel.
 func (j JobState) Title() string {
 	switch j.Phase {
+	case PhaseCatalogReady:
+		return "目录已就绪"
 	case PhaseParsing:
 		return "正在解析目录"
 	case PhaseStarting:

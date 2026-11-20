@@ -39,6 +39,16 @@ type browserSession struct {
 	loaded    bool
 	cookies   int
 	userAgent string
+
+	// onLoaded runs once each time a page finishes loading, so the app can
+	// read the catalog without making the user press a second button.
+	onLoaded func()
+	// onManual runs when the site demands a human, so the app can bring the
+	// browser forward at the one moment it is actually needed.
+	onManual func()
+	// pendingQuery is a search to submit through the site's own form once the
+	// page has loaded, for a site whose search is a POST.
+	pendingQuery string
 }
 
 func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *browserSession {
@@ -54,11 +64,21 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 		view.Page().OnDidFinishLoad(func() {
 			s.mu.Lock()
 			loading, manual := s.loading, s.manual
+			onLoaded := s.onLoaded
+			query := s.pendingQuery
+			s.pendingQuery = ""
 			s.mu.Unlock()
 			if !loading || manual {
 				return
 			}
 			s.set("页面已加载。确认内容后同步会话。", false)
+
+			// A site whose search is a POST is searched by filling its own
+			// form once the page it lives on has loaded.
+			if query != "" {
+				s.submitSearchForm(query)
+				return
+			}
 
 			// A site that blocks the request answers with its own error page,
 			// which looks loaded; name it instead of letting the user try to
@@ -70,6 +90,9 @@ func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *bro
 						s.set("站点返回了拦截页，请完成验证或更换站点。", false)
 						return
 					}
+				}
+				if onLoaded != nil {
+					onLoaded()
 				}
 			}()
 		})
@@ -154,6 +177,53 @@ func (s *browserSession) ResetManual() {
 	s.mu.Unlock()
 }
 
+// OnLoaded sets what runs when a page finishes loading.
+func (s *browserSession) OnLoaded(fn func()) {
+	s.mu.Lock()
+	s.onLoaded = fn
+	s.mu.Unlock()
+}
+
+// OnManual sets what runs when the site demands a human.
+func (s *browserSession) OnManual(fn func()) {
+	s.mu.Lock()
+	s.onManual = fn
+	s.mu.Unlock()
+}
+
+// HTML is the page the panel is showing, as the site sent it.
+func (s *browserSession) HTML() string {
+	return s.eval("document.documentElement.outerHTML")
+}
+
+// URL is the address the panel is showing.
+func (s *browserSession) URL() string {
+	return s.eval("location.href")
+}
+
+// SubmitSearchAfterLoad fills the site's own search form and submits it, for a
+// site whose search is a POST the panel cannot be pointed at directly.
+func (s *browserSession) SubmitSearchAfterLoad(query string) {
+	s.mu.Lock()
+	s.pendingQuery = query
+	s.mu.Unlock()
+}
+
+// submitSearchForm types the query into the site's search box and submits the
+// form, which is how a POST search has to be started from inside the page.
+func (s *browserSession) submitSearchForm(query string) {
+	script := fmt.Sprintf(`(function(){
+		var q = %q;
+		var input = document.querySelector('input[name="searchkey"]');
+		if (!input) { return 'no-input'; }
+		input.value = q;
+		var form = input.form;
+		if (form) { form.submit(); return 'submitted'; }
+		return 'no-form';
+	})()`, query)
+	s.eval(script)
+}
+
 func (s *browserSession) eval(script string) string {
 	if s.view == nil {
 		return ""
@@ -182,9 +252,6 @@ func (s *browserSession) Sync(ctx context.Context) (html string, cookies []*http
 
 	html = s.eval("document.documentElement.outerHTML")
 	cookies = s.Cookies()
-	if len(cookies) == 0 && s.source.RequiresCookies {
-		return "", nil, "", SessionError{"还没有拿到站点 Cookie。请先在浏览器面板完成验证，再点击同步会话。"}
-	}
 	agent = s.eval("navigator.userAgent")
 	if agent == "" {
 		agent = "JustNovel"
@@ -199,6 +266,7 @@ func (s *browserSession) Sync(ctx context.Context) (html string, cookies []*http
 	s.userAgent = agent
 	s.cookies = len(cookies)
 	s.loading = false
+	s.loaded = html != ""
 	s.title = title
 	if len(cookies) == 0 {
 		s.status = "页面会话已同步。"
@@ -285,7 +353,11 @@ func (s *browserSession) expandCatalog(ctx context.Context) error {
 			return nil
 		}
 	}
-	return DownloadError{"完整目录加载超时。请确认网络正常后重新同步会话。"}
+	// The site's complete-catalog endpoint is the fallback: sto9's adapter
+	// reads it directly, so a button that never settles must not block the
+	// sync.
+	s.set("完整目录按钮没有响应，继续读取目录...", true)
+	return nil
 }
 
 // LoadHTML navigates the panel to a page and returns the HTML the browser
@@ -303,6 +375,15 @@ func (s *browserSession) LoadHTML(ctx context.Context, page string) (string, err
 		if html != "" && !looksLikeChallengePage(html) {
 			return html, nil
 		}
+	}
+
+	// Once the browser has passed the site's verification, a same-origin
+	// fetch carries its cookies and fingerprint without navigating the
+	// panel away from the catalog. It is much faster than loading every
+	// chapter as a page, and falls back to a navigation when the site
+	// refuses it.
+	if html, ok := s.fetchInPage(ctx, page); ok {
+		return html, nil
 	}
 
 	s.set("正在通过浏览器会话加载 "+fileNameOf(page)+"...", true)
@@ -351,14 +432,68 @@ func (s *browserSession) LoadHTML(ctx context.Context, page string) (string, err
 	return "", SessionError{"浏览器会话仍停留在 Cloudflare 挑战页。请先在浏览器面板完成验证后重试。"}
 }
 
+// fetchInPage reads a page with the browser's own fetch, so the request
+// carries the session's cookies and browser fingerprint without navigating
+// the panel. It reports false when the site refuses the fetch or answers
+// with a challenge, in which case LoadHTML navigates to the page.
+func (s *browserSession) fetchInPage(ctx context.Context, page string) (string, bool) {
+	if s.view == nil {
+		return "", false
+	}
+	current := s.eval("location.href")
+	if current == "" || current == "about:blank" {
+		return "", false
+	}
+
+	script := fmt.Sprintf(`try {
+		const response = await fetch(%q, {
+			credentials: 'include',
+			redirect: 'follow',
+			headers: {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'}
+		});
+		const text = await response.text();
+		return {status: response.status, url: response.url, text: text};
+	} catch (error) {
+		return {status: 0, url: '', text: '', error: String(error)};
+	}`, page)
+
+	value, err := s.view.Page().EvalContext(ctx, script)
+	if err != nil {
+		return "", false
+	}
+	result, ok := value.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	status, _ := result["status"].(float64)
+	text, _ := result["text"].(string)
+	if status < 200 || status >= 300 || text == "" || looksLikeChallengePage(text) {
+		return "", false
+	}
+
+	s.mu.Lock()
+	s.loading = false
+	s.manual = false
+	s.status = "浏览器会话已拿到章节内容。"
+	s.mu.Unlock()
+	s.invalidate()
+	return text, true
+}
+
 func (s *browserSession) markManualVerification() {
 	s.mu.Lock()
 	first := !s.notified
 	s.manual = true
 	s.notified = true
 	s.status = "检测到 Cloudflare 验证，请在浏览器面板完成验证。"
+	onManual := s.onManual
 	s.mu.Unlock()
 	s.invalidate()
+
+	// The one moment the browser has to be in front of the user.
+	if onManual != nil {
+		onManual()
+	}
 
 	if first && mygo.NotificationsSupported() {
 		note := mygo.NewNotification(mygo.NotificationOptions{

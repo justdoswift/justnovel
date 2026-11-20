@@ -12,6 +12,7 @@ type Source struct {
 	Kind        SourceKind
 	Name        string
 	Placeholder string
+	Example     string
 	IdleDetail  string
 	InvalidText string
 
@@ -21,8 +22,6 @@ type Source struct {
 	CookieDomains []string
 	// NavHosts are the hosts of the site's own pages.
 	NavHosts []string
-	// RequiresCookies makes an empty cookie jar a session error.
-	RequiresCookies bool
 	// ExpandButton is the element the webview clicks to load the whole
 	// catalog, when the site loads it lazily.
 	ExpandButton string
@@ -37,6 +36,13 @@ type Source struct {
 	RetryRateLimitForever bool
 	ChapterDelayMin       time.Duration
 	ChapterDelayMax       time.Duration
+
+	// SearchURL builds the page that searches this site for a title. The
+	// search runs in the browser panel, because the sites either sit behind
+	// Cloudflare, take a POST form, or fill their results with script.
+	SearchURL func(query string) string
+	// ParseSearch reads the search page's links into books.
+	ParseSearch func(html string, base *url.URL) []SearchHit
 }
 
 // Sources lists the sites the app reads, in the order the source menu shows
@@ -45,37 +51,44 @@ var Sources = []Source{
 	{
 		Kind:             SourceShuba69,
 		Name:             "69 书吧",
-		Placeholder:      "https://www.69shuba.com/book/90028/",
-		IdleDetail:       "输入 69 书吧目录页 URL，然后在右侧浏览器里完成验证。",
-		InvalidText:      "请输入有效的 69 书吧目录页链接。",
+		Placeholder:      "粘贴目录页或章节页地址",
+		Example:          "https://www.69shuba.com/book/90028/",
+		IdleDetail:       "粘贴 69 书吧的书籍页、目录页或章节页，回车打开目录。",
+		InvalidText:      "请输入 69 书吧的书籍页、目录页或章节页链接。",
 		SessionTitle:     "69 书吧会话",
 		CookieDomains:    []string{"69shuba.com"},
 		NavHosts:         []string{"69shuba.com"},
-		RequiresCookies:  true,
-		RateLimitCodes:   map[int]bool{403: true, 429: true},
+		RateLimitCodes:   map[int]bool{429: true},
 		RateLimitDelay:   10 * time.Second,
 		MaxRateLimitWait: 10,
 		ChapterDelayMin:  1500 * time.Millisecond,
 		ChapterDelayMax:  3 * time.Second,
+		SearchURL:        shuba69SearchURL,
+		ParseSearch:      parseShuba69Search,
 	},
 	{
 		Kind:                  SourcePiaotian,
 		Name:                  "飘天文学",
-		Placeholder:           "https://www.piaotia.com/html/15/15709/",
-		IdleDetail:            "输入飘天文学目录页 URL，然后在右侧浏览器里完成验证。",
-		InvalidText:           "请输入有效的飘天文学目录页链接。",
+		Placeholder:           "粘贴目录页或章节页地址",
+		Example:               "https://www.piaotia.com/html/15/15709/",
+		IdleDetail:            "粘贴飘天文学的目录页或章节页，回车打开目录。",
+		InvalidText:           "请输入飘天文学的目录页或章节页链接。",
 		SessionTitle:          "飘天文学会话",
 		CookieDomains:         []string{"piaotia.com"},
 		NavHosts:              []string{"piaotia.com"},
-		RequiresCookies:       true,
 		RateLimitCodes:        map[int]bool{429: true},
 		RateLimitDelay:        time.Second,
 		RetryRateLimitForever: true,
+		ChapterDelayMin:       400 * time.Millisecond,
+		ChapterDelayMax:       900 * time.Millisecond,
+		SearchURL:             piaotianSearchURL,
+		ParseSearch:           parsePiaotianSearch,
 	},
 	{
 		Kind:              SourceSto9,
 		Name:              "思兔 sto9",
-		Placeholder:       "https://sto9.com/book/13564/index.html",
+		Placeholder:       "粘贴目录页或章节页地址",
+		Example:           "https://sto9.com/book/13564/index.html",
 		IdleDetail:        "输入思兔 sto9 的章节页、书页或目录页 URL。",
 		InvalidText:       "请输入有效的思兔 sto9 章节页、书页或目录页链接。",
 		SessionTitle:      "思兔 sto9 会话",
@@ -88,6 +101,8 @@ var Sources = []Source{
 		MaxRateLimitWait:  10,
 		ChapterDelayMin:   300 * time.Millisecond,
 		ChapterDelayMax:   700 * time.Millisecond,
+		SearchURL:         sto9SearchURL,
+		ParseSearch:       parseSto9Search,
 	},
 }
 
@@ -131,7 +146,11 @@ func (s Source) OwnPage(rawURL string) bool {
 // CatalogURL validates the URL the user typed and returns the catalog page
 // it names, or nil when it names none.
 func (s Source) CatalogURL(rawURL string) *url.URL {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
+	raw := strings.TrimSpace(rawURL)
+	if raw != "" && !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return nil
 	}
@@ -139,28 +158,29 @@ func (s Source) CatalogURL(rawURL string) *url.URL {
 	case SourceShuba69:
 		return shuba69CatalogURL(u)
 	case SourcePiaotian:
-		if piaotianCatalogURL(u) {
-			return u
-		}
+		return piaotianCatalogURL(u)
 	case SourceSto9:
 		return sto9CatalogURL(u)
 	}
 	return nil
 }
 
-// shuba69CatalogURL turns a book page into the catalog page that lists every
-// chapter: /book/<id>/ rather than /book/<id>.htm, which holds only the
-// latest few.
+// shuba69CatalogURL turns a book page, catalog page or chapter page into the
+// catalog page that lists every chapter: /book/<id>/ rather than
+// /book/<id>.htm, which holds only the latest few.
 func shuba69CatalogURL(u *url.URL) *url.URL {
 	host := strings.ToLower(u.Host)
 	if !strings.Contains(host, "69shuba.com") {
 		return nil
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 || !strings.EqualFold(parts[0], "book") {
-		return nil
+	var id string
+	switch {
+	case len(parts) >= 2 && strings.EqualFold(parts[0], "book"):
+		id = strings.TrimSuffix(strings.ToLower(parts[1]), ".htm")
+	case len(parts) >= 3 && strings.EqualFold(parts[0], "txt"):
+		id = parts[1]
 	}
-	id := strings.TrimSuffix(strings.ToLower(parts[1]), ".htm")
 	if !allDigits(id) {
 		return nil
 	}
@@ -171,17 +191,44 @@ func shuba69CatalogURL(u *url.URL) *url.URL {
 	return catalog
 }
 
-// piaotianCatalogURL reports whether the URL is /html/<class>/<book>/.
-func piaotianCatalogURL(u *url.URL) bool {
+// piaotianCatalogURL turns a catalog page or chapter page into the catalog
+// page /html/<class>/<book>/.
+func piaotianCatalogURL(u *url.URL) *url.URL {
 	host := strings.ToLower(u.Host)
 	if !strings.Contains(host, "piaotia.com") {
-		return false
+		return nil
 	}
 	parts := strings.Split(strings.Trim(strings.ToLower(u.Path), "/"), "/")
-	if len(parts) != 3 || parts[0] != "html" {
-		return false
+	// A book page is /bookinfo/<a>/<b>.html, a catalog is /html/<a>/<b>/, and
+	// a chapter is /html/<a>/<b>/<n>.html. All three name the same book.
+	if len(parts) == 3 && parts[0] == "bookinfo" {
+		parts[2] = strings.TrimSuffix(parts[2], ".html")
+		if !allDigits(parts[1]) || !allDigits(parts[2]) {
+			return nil
+		}
+		catalog, err := url.Parse(u.Scheme + "://" + u.Host + "/html/" + parts[1] + "/" + parts[2] + "/")
+		if err != nil {
+			return nil
+		}
+		return catalog
 	}
-	return allDigits(parts[1]) && allDigits(parts[2])
+	if len(parts) != 3 && len(parts) != 4 {
+		return nil
+	}
+	if parts[0] != "html" || !allDigits(parts[1]) || !allDigits(parts[2]) {
+		return nil
+	}
+	if len(parts) == 4 {
+		chapter := strings.TrimSuffix(parts[3], ".html")
+		if !allDigits(chapter) {
+			return nil
+		}
+	}
+	catalog, err := url.Parse(u.Scheme + "://" + u.Host + "/html/" + parts[1] + "/" + parts[2] + "/")
+	if err != nil {
+		return nil
+	}
+	return catalog
 }
 
 // sto9CatalogURL turns a chapter page, book page or catalog page of sto9 into

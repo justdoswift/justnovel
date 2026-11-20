@@ -43,6 +43,10 @@ type Crawler struct {
 	agent   string
 	referer string
 	browser BrowserLoader
+	// browserStreak counts chapters in a row the site refused to the plain
+	// HTTP client, so a blocked site is read through the browser at once
+	// instead of paying a refused request for every chapter.
+	browserStreak int
 }
 
 // NewCrawler builds a crawler of the source.
@@ -109,13 +113,12 @@ func (c *Crawler) FetchCatalog(ctx context.Context, page string, preferredHTML s
 	}
 
 	if preferredHTML != "" && !looksLikeChallengePage(preferredHTML) {
-		if catalog, err := c.adapter.ParseCatalog(preferredHTML, base); err == nil && len(catalog.Chapters) > 0 {
-			return c.withMetadata(ctx, catalog, preferredHTML, base), nil
-		}
-		if supplements := c.adapter.SupplementURLs(base); len(supplements) > 0 {
+		if len(c.adapter.SupplementURLs(base)) > 0 {
 			if catalog, err := c.parseWithSupplements(ctx, preferredHTML, base); err == nil {
 				return catalog, nil
 			}
+		} else if catalog, err := c.adapter.ParseCatalog(preferredHTML, base); err == nil && len(catalog.Chapters) > 0 {
+			return c.withMetadata(ctx, catalog, preferredHTML, base), nil
 		}
 	}
 
@@ -130,33 +133,51 @@ func (c *Crawler) FetchCatalog(ctx context.Context, page string, preferredHTML s
 }
 
 func (c *Crawler) parseWithSupplements(ctx context.Context, primary string, base *url.URL) (BookCatalog, error) {
-	if catalog, err := c.adapter.ParseCatalog(primary, base); err == nil && len(catalog.Chapters) > 0 {
-		return c.withMetadata(ctx, catalog, primary, base), nil
-	}
+	primaryCatalog, primaryErr := c.adapter.ParseCatalog(primary, base)
 
 	supplements := c.adapter.SupplementURLs(base)
-	if len(supplements) == 0 {
-		return c.adapter.ParseCatalog(primary, base)
-	}
-
 	documents := []string{primary}
+	fetchedSupplements := 0
+	var supplementErr error
 	for _, supplement := range supplements {
 		html, _, err := c.fetch(ctx, supplement.String(), true, nil)
 		if err != nil {
-			return BookCatalog{}, err
+			supplementErr = err
+			continue
 		}
 		if looksLikeChallengePage(html) {
-			return BookCatalog{}, SessionError{"完整目录请求仍然返回挑战页。请确认浏览器面板当前能正常打开这个站点后重试。"}
+			supplementErr = SessionError{"完整目录请求仍然返回挑战页。请确认浏览器面板当前能正常打开这个站点后重试。"}
+			continue
 		}
 		documents = append(documents, html)
+		fetchedSupplements++
 	}
 	for _, metadata := range c.adapter.MetadataURLs(base) {
-		if html, _, err := c.fetch(ctx, metadata.String(), true, nil); err == nil {
+		if html, _, err := c.fetch(ctx, metadata.String(), true, nil); err == nil && !looksLikeChallengePage(html) {
 			documents = append(documents, html)
 		}
 	}
 
-	return c.adapter.ParseCatalog(strings.Join(documents, "\n"), base)
+	if len(supplements) > 0 && fetchedSupplements == 0 {
+		if supplementErr != nil {
+			return BookCatalog{}, supplementErr
+		}
+		return BookCatalog{}, DownloadError{"完整目录接口没有返回内容。"}
+	}
+
+	if len(documents) > 1 {
+		if merged, err := c.adapter.ParseCatalog(strings.Join(documents, "\n"), base); err == nil && len(merged.Chapters) > 0 {
+			return merged, nil
+		}
+	}
+
+	if primaryErr == nil && len(primaryCatalog.Chapters) > 0 {
+		return primaryCatalog, nil
+	}
+	if primaryErr != nil {
+		return BookCatalog{}, primaryErr
+	}
+	return BookCatalog{}, DownloadError{"目录页里没有找到章节链接，可能站点结构有变化。"}
 }
 
 func (c *Crawler) withMetadata(ctx context.Context, catalog BookCatalog, primary string, base *url.URL) BookCatalog {
@@ -186,6 +207,14 @@ func (c *Crawler) FetchChapter(ctx context.Context, chapter ChapterRef, onTransp
 		onTransport = func(Transport) {}
 	}
 
+	if c.browser != nil && c.browserStreak >= 2 {
+		onTransport(TransportBrowser)
+		if content, ok := c.fetchChapterThroughBrowser(ctx, chapter); ok {
+			c.browserStreak++
+			return content, TransportBrowser, nil
+		}
+	}
+
 	html, transport, err := c.fetch(ctx, chapter.URL, false, onTransport)
 	if err != nil {
 		var sessionErr SessionError
@@ -193,13 +222,18 @@ func (c *Crawler) FetchChapter(ctx context.Context, chapter ChapterRef, onTransp
 			onTransport(TransportBrowser)
 			browserHTML, browserErr := c.browser(ctx, chapter.URL)
 			if browserErr != nil {
+				c.browserStreak = 0
 				return Chapter{}, transport, DownloadError{fmt.Sprintf("请求 %s 失败。%s 浏览器回退也失败：%s",
 					chapter.URL, sessionErr.Error(), browserErr.Error())}
 			}
 			html, transport = browserHTML, TransportBrowser
+			c.browserStreak++
 		} else {
+			c.browserStreak = 0
 			return Chapter{}, transport, chapterError(chapter, err)
 		}
+	} else {
+		c.browserStreak = 0
 	}
 
 	if looksLikeChallengePage(html) {
@@ -212,6 +246,21 @@ func (c *Crawler) FetchChapter(ctx context.Context, chapter ChapterRef, onTransp
 	}
 	content.Order = chapter.Order
 	return content, transport, nil
+}
+
+// fetchChapterThroughBrowser reads a chapter in the browser panel and parses
+// it, reporting whether it succeeded.
+func (c *Crawler) fetchChapterThroughBrowser(ctx context.Context, chapter ChapterRef) (Chapter, bool) {
+	html, err := c.browser(ctx, chapter.URL)
+	if err != nil || looksLikeChallengePage(html) {
+		return Chapter{}, false
+	}
+	content, err := c.adapter.ParseChapter(html, mustParseURL(chapter.URL))
+	if err != nil {
+		return Chapter{}, false
+	}
+	content.Order = chapter.Order
+	return content, true
 }
 
 // WaitBetweenChapters waits the source's random delay, so the site is read at
@@ -242,6 +291,7 @@ func chapterError(chapter ChapterRef, err error) error {
 func (c *Crawler) fetch(ctx context.Context, page string, isCatalog bool, onTransport func(Transport)) (string, Transport, error) {
 	rateLimitWaits := 0
 	transientRetries := 0
+	rateLimitDeadline := time.Now().Add(45 * time.Second)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -261,9 +311,15 @@ func (c *Crawler) fetch(ctx context.Context, page string, isCatalog bool, onTran
 				if !c.source.RetryRateLimitForever && rateLimitWaits > c.source.MaxRateLimitWait {
 					return "", TransportSession, DownloadError{fmt.Sprintf("请求 %s 失败。已自动重试，当前仍未恢复：HTTP %d。", page, status)}
 				}
+				if time.Now().After(rateLimitDeadline) {
+					return "", TransportSession, DownloadError{fmt.Sprintf("站点持续限流（HTTP %d），已等待 45 秒。请稍后重试，或先在浏览器面板打开章节页。", status)}
+				}
 				delay := c.source.RateLimitDelay
 				if retryAfter > 0 {
 					delay = retryAfter
+				}
+				if remaining := time.Until(rateLimitDeadline); delay > remaining {
+					delay = remaining
 				}
 				if err := sleepCtx(ctx, delay); err != nil {
 					return "", TransportSession, err

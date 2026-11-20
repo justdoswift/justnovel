@@ -29,18 +29,26 @@ func main() {
 			Height:          800,
 			MinWidth:        1080,
 			MinHeight:       720,
-			BackgroundColor: "#090b0e",
+			BackgroundColor: "#0a0d12",
 			TitleBarStyle:   mygo.TitleBarHidden,
 			Hidden:          true,
 			Content:         ui.View(app.view),
 		})
 		app.win = win
 
-		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#0b0f14"})
+		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#0a0d12"})
 		if err != nil {
 			log.Fatal(err)
 		}
 		app.session = newBrowserSession(win, view, app.source)
+		// The browser comes forward only when a site demands a human.
+		app.session.OnManual(func() {
+			win.Update(func() {
+				app.showBrowser = true
+				app.awaiting = true
+				app.logf(LogWarn, "需要人工验证", "在浏览器面板完成验证后会自动继续")
+			})
+		})
 		win.Show()
 	})
 
