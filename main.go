@@ -11,17 +11,25 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
+	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
 )
 
 func main() {
 	app := newApp()
 
+	// Checks for a newer release in the background and, from the app menu, on
+	// demand. The window is native UI, so the native updater draws it too.
+	mygo.Use(native.Plugin)
+
 	mygo.App.WhenReady(func() {
 		data, err := mygo.App.Path(mygo.PathUserData)
 		if err == nil {
 			app.history = NewHistory(filepath.Join(data, "history.json"))
 		}
+
+		mygo.App.SetMenu(mainMenu())
 
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "JustNovel",
@@ -55,4 +63,34 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// mainMenu is the app menu: about, check for updates, hide, quit. The update
+// item opens the same window the background check does.
+func mainMenu() *mygo.Menu {
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "JustNovel", Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleAbout},
+			updater.MenuItem(),
+			mygo.Separator(),
+			{Role: mygo.RoleHide},
+			{Role: mygo.RoleHideOthers},
+			{Role: mygo.RoleUnhide},
+			mygo.Separator(),
+			{Role: mygo.RoleQuit},
+		}},
+		{Label: "编辑", Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleUndo},
+			{Role: mygo.RoleRedo},
+			mygo.Separator(),
+			{Role: mygo.RoleCut},
+			{Role: mygo.RoleCopy},
+			{Role: mygo.RolePaste},
+			{Role: mygo.RoleSelectAll},
+		}},
+		{Label: "窗口", Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleMinimize},
+			{Role: mygo.RoleZoom},
+		}},
+	})
 }
