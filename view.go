@@ -9,76 +9,110 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// The visual system, measured off Rex: a dark workspace with a near-black
-// canvas, panels a shade lighter, and the work lifted by value rather than by
-// borders. The accent is the system blue, spent only on the one action to take
-// next and on the row that is moving.
+// The visual system: a native macOS window, as System Settings draws one. A
+// full-height translucent sidebar holds the library and the sites; the content
+// pane carries a unified toolbar with the book's identity, the search field
+// and the one primary action; the work itself is set in system type, with
+// hairlines instead of boxes. Blue is the only accent, red belongs to the seal
+// and to destructive actions.
 var (
-	canvas     = ui.Hex("#0a0d12")
-	railTone   = ui.Hex("#0e1117")
-	card       = ui.Hex("#111419")
-	cardHover  = ui.Hex("#161a20")
-	cardSunk   = ui.Hex("#1b2027")
-	textMain   = ui.Hex("#e7edf3")
-	textSoft   = ui.Hex("#a8b2bf")
-	textFaint  = ui.Hex("#7c8794")
-	textMuted  = ui.Hex("#5c6673")
-	hairline   = ui.RGBA(255, 255, 255, 0.06)
-	hairlineUp = ui.RGBA(255, 255, 255, 0.11)
+	contentBg  = ui.Hex("#ffffff")
+	sidebarBg  = ui.Hex("#f5f5f7")
+	fill       = ui.Hex("#f2f2f7")
+	fillStrong = ui.Hex("#e8e8ed")
 
-	accent     = ui.Hex("#4582f9")
-	accentInk  = ui.Hex("#ffffff")
-	accentDim  = ui.RGBA(69, 130, 249, 0.14)
-	danger     = ui.Hex("#f06a6a")
-	warning    = ui.Hex("#e0a33e")
-	success    = ui.Hex("#5fbf7f")
-	progressBg = ui.Hex("#1b2027")
+	textMain  = ui.Hex("#1d1d1f")
+	textSoft  = ui.Hex("#6e6e73")
+	textFaint = ui.Hex("#86868b")
 
-	cardRing   = ui.RGBA(255, 255, 255, 0.07)
-	cardShadow = ui.RGBA(0, 0, 0, 0.45)
+	// The sidebar's material is a little darker than the content, so its
+	// small text takes a darker secondary than textSoft.
+	textSidebar = ui.Hex("#56565b")
+
+	separator       = ui.RGBA(0, 0, 0, 0.08)
+	separatorStrong = ui.RGBA(0, 0, 0, 0.16)
+
+	accent    = ui.Hex("#007aff")
+	accentInk = ui.Hex("#ffffff")
+	seal      = ui.Hex("#b3402f")
+	danger    = ui.Hex("#ff3b30")
+	warning   = ui.Hex("#ff9500")
+	success   = ui.Hex("#34c759")
+
+	// Text-sized state colors: the bright system colors are for dots, icons
+	// and bars, which need only 3:1, not for 11–13pt text.
+	dangerText  = ui.Hex("#d70015")
+	warningText = ui.Hex("#8a4b00")
+	successText = ui.Hex("#1e7a34")
+
+	selection   = ui.RGBA(0, 122, 255, 0.12)
+	progressBg  = ui.RGBA(0, 0, 0, 0.08)
+	sheetShadow = ui.RGBA(0, 0, 0, 0.18)
+
+	// A source-list row chosen in an inactive window: a neutral gray darker
+	// than the material, with a semibold label, rather than the accent.
+	inactiveSelection = ui.Hex("#cfcecc")
 )
 
 var theme = func() *ui.Theme {
-	t := ui.DarkTheme()
-	t.Background = canvas
-	t.Surface = card
-	t.SurfaceHover = cardHover
-	t.SurfacePressed = cardSunk
-	t.Border = hairlineUp
+	t := ui.LightTheme()
+	t.Background = contentBg
+	t.Surface = contentBg
+	t.SurfaceHover = fill
+	t.SurfacePressed = fillStrong
+	t.Border = separatorStrong
 	t.Text = textMain
 	t.TextMuted = textFaint
 	t.Accent = accent
-	t.AccentHover = ui.Hex("#5c92fa")
-	t.AccentPressed = ui.Hex("#3570e0")
+	t.AccentHover = ui.Hex("#0068d9")
+	t.AccentPressed = ui.Hex("#0057b8")
 	t.AccentText = accentInk
+	t.InactiveAccent = ui.Hex("#d1d1d6")
 	t.Danger = danger
 	t.Warning = warning
 	t.Success = success
-	t.Selection = ui.RGBA(69, 130, 249, 0.28)
-	t.FocusRingWidth = 2
-	t.FocusRingOffset = 1
-	t.Radius = 8
+	t.Selection = selection
+	t.Focus = ui.RGBA(0, 122, 255, 0.35)
+	t.FocusRingWidth = 3
+	t.FocusRingOffset = 2
+	t.Inverse = textMain
+	t.InverseText = contentBg
+	t.Radius = 6
 	t.Spacing = 4
 	t.FontSize = 13
+	t.Scrollbar = ui.RGBA(0, 0, 0, 0.20)
 	return t
 }()
 
+// One stroke weight, round caps, drawn on a 16 grid — the whole icon set.
 var (
-	iconBack   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3.5 6 8l4.5 4.5"/></svg>`))
-	iconReload = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 3v3.5H9.5"/></svg>`))
+	iconCheck   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 8.6 6.6 12 12.8 4.6"/></svg>`))
+	iconRetry   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.8v3.4h-3.4"/></svg>`))
+	iconSwap    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5h9M9 2.8l2.7 2.7L9 8.2"/><path d="M13.5 10.5h-9M7 7.8l-2.7 2.7L7 13.2"/></svg>`))
+	iconWarn    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.4 14.6 13H1.4L8 2.4z"/><path d="M8 6.6v3.2"/><path d="M8 11.4h.01"/></svg>`))
+	iconError   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 5.4v3.4"/><path d="M8 11h.01"/></svg>`))
+	iconInfo    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 7.4v3.2"/><path d="M8 5h.01"/></svg>`))
+	iconChevron = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg>`))
+	iconHistory = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 4.8V8l2.2 1.4"/></svg>`))
+	iconGlobe   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="M2.6 8h10.8"/><path d="M8 2.4c1.7 1.6 2.6 3.5 2.6 5.6S9.7 12 8 13.6C6.3 12 5.4 10.1 5.4 8S6.3 4 8 2.4z"/></svg>`))
+	iconMore    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.2" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.8" cy="8" r="1.2"/></svg>`))
+	iconBookBig = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7h26a4.5 4.5 0 0 1 4.5 4.5V42H13.5A4.5 4.5 0 0 1 9 37.5z"/><path d="M9 37.5A4.5 4.5 0 0 1 13.5 33H39.5"/><path d="M16.5 7v26"/><path d="M22.5 15h10"/></svg>`))
 )
 
-// view draws the window: a title bar with the source and the one action, the
-// work in the middle, and a status line along the bottom.
+// view draws the window: the library on the left, the work on the right.
 func (a *app) view(c *ui.Context) {
 	c.SetTheme(theme)
 
-	ui.Column(c).Fill().Background(canvas).Children(func() {
-		a.topBar(c)
-		ui.Row(c).Grow(1).Children(func() {
-			a.stage(c)
-		})
-		a.statusBar(c)
+	// The material shows where the view draws no background: the sidebar.
+	if c.Vibrancy() {
+		c.Root().Background(ui.Transparent)
+	}
+
+	bar := c.TitleBar()
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+		a.sidebar(c, bar)
+		ui.Box(c).Width(1).Shrink(0).Background(separator)
+		a.pane(c)
 	})
 
 	a.exportDialog(c)
@@ -88,93 +122,294 @@ func (a *app) view(c *ui.Context) {
 	a.deleteAlert(c)
 }
 
-// topBar is the window's title bar: the source, the search field, and the one
-// action that moves the work forward.
-func (a *app) topBar(c *ui.Context) {
-	ui.Column(c).Children(func() {
-		ui.Row(c).Height(54).Padding(0, 16, 0, 84).Gap(10).AlignItems(ui.Center).Children(func() {
-			a.brand(c)
-			ui.Spacer(c)
-			a.topActionButton(c)
-			a.historyAction(c)
-		})
+// sidebar is the library: the recent downloads and the sites, as the source
+// list of a native window, with the window's material showing through.
+func (a *app) sidebar(c *ui.Context, bar ui.TitleBar) {
+	top := bar.Bottom + 10
+	if top < 16 {
+		top = 16
+	}
 
-		ui.Divider(c).Background(hairline)
+	column := ui.Column(c).Width(228).Shrink(0).Padding(top, 10, 12, 10).Gap(0)
+	if !c.Vibrancy() {
+		column.Background(sidebarBg)
+	}
+	column.Children(func() {
+		a.brand(c)
+		ui.Box(c).Height(18).Shrink(0)
+
+		a.sidebarRecent(c)
+		ui.Box(c).Height(16).Shrink(0)
+		a.sidebarSources(c)
+
+		ui.Spacer(c)
+		ui.Text(c, "仅抓取你有权访问的公开页面").
+			FontSize(11).TextColor(textSidebar).Padding(0, 8).MaxLines(2).LineHeight(1.4)
 	})
 }
 
 func (a *app) brand(c *ui.Context) {
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Width(112).DragWindow().Children(func() {
-		ui.Column(c).Size(22, 22).Radius(5).Background(textMain).
+	ui.Row(c).Height(30).Padding(0, 8).Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
+		ui.Column(c).Size(20, 20).Radius(5).Background(seal).
 			AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			ui.Text(c, "J").FontSize(12).Bold().TextColor(card)
+			ui.Text(c, "J").FontSize(11).FontWeight(600).TextColor(accentInk)
 		})
-		ui.Text(c, "justnovel").FontSize(13).Bold().LetterSpacing(-0.1).TextColor(textMain)
+		ui.Text(c, "justnovel").FontSize(13).FontWeight(600).TextColor(textMain)
 	})
 }
 
-// sourcePicker is the first thing the user picks: which site to look in.
-func (a *app) sourcePicker(c *ui.Context) {
-	names := make([]string, len(Sources))
-	for i, source := range Sources {
-		names[i] = source.Name
+// sidebarSection is the small gray heading of a group of sidebar rows.
+func (a *app) sidebarSection(c *ui.Context, title string, count int) {
+	ui.Row(c).Height(24).Padding(0, 8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(textSidebar).Grow(1)
+		if count > 0 {
+			ui.Text(c, itoa(count)).FontSize(11).TextColor(textSidebar).FontFeatures("tnum")
+		}
+	})
+}
+
+// sidebarRecent is the last few books, as a way back into earlier work.
+func (a *app) sidebarRecent(c *ui.Context) {
+	records := a.recentRecords(5)
+	count := 0
+	if a.history != nil {
+		count = a.history.Count()
 	}
-	chosen := a.source.Name
-	ui.Select(c, &chosen, names).FontSize(12).Height(32).Width(112).
-		Background(cardSunk).Radius(8).OnChange(func() {
+
+	ui.Column(c).Gap(1).Children(func() {
+		a.sidebarSection(c, "最近下载", count)
+
+		if len(records) == 0 {
+			ui.Text(c, "暂无记录").FontSize(12).TextColor(textSidebar).Padding(4, 8)
+			return
+		}
+
+		for _, record := range records {
+			record := record
+			row := ui.Row(c).Height(28).Padding(4, 8).Radius(6).Gap(7).AlignItems(ui.Center).
+				OnClick(func() { a.openHistoryRecord(record.ID) })
+			if row.Hovered() {
+				row.Background(fill)
+			}
+			row.Children(func() {
+				typeCover(c, record.Title, 16, 20, 9, "")
+				ui.Text(c, record.Title).FontSize(13).TextColor(textMain).Grow(1).MaxLines(1)
+			})
+		}
+
+		row := ui.Row(c).Height(28).Padding(4, 8).Radius(6).Gap(7).AlignItems(ui.Center).
+			OnClick(a.openHistory)
+		if row.Hovered() {
+			row.Background(fill)
+		}
+		row.Children(func() {
+			ui.Icon(c, iconHistory).Size(14, 14).TextColor(textSoft)
+			ui.Text(c, "全部历史").FontSize(13).TextColor(textMain)
+		})
+	})
+}
+
+// sidebarSources is the site the next book comes from, as the chosen row of a
+// source list: filled with the accent while the window is active, gray while
+// it is not.
+func (a *app) sidebarSources(c *ui.Context) {
+	current := a.session.Source().Kind
+
+	ui.Column(c).Gap(1).Children(func() {
+		a.sidebarSection(c, "站点", 0)
+
 		for _, source := range Sources {
-			if source.Name == chosen {
-				a.selectSource(source.Kind)
+			source := source
+			selected := source.Kind == current
+			row := ui.Row(c).Height(28).Padding(4, 8).Radius(6).Gap(7).AlignItems(ui.Center).
+				OnClick(func() { a.session.adopt(source) })
+
+			iconColor, labelColor := textSoft, textMain
+			switch {
+			case selected && c.WindowActive():
+				row.Background(accent)
+				iconColor, labelColor = accentInk, accentInk
+			case selected:
+				row.Background(inactiveSelection)
+				iconColor, labelColor = textMain, textMain
+			case row.Hovered():
+				row.Background(fill)
 			}
+
+			row.Children(func() {
+				ui.Icon(c, iconGlobe).Size(14, 14).TextColor(iconColor)
+				label := ui.Text(c, source.Name).FontSize(13).TextColor(labelColor).Grow(1).MaxLines(1)
+				if selected && !c.WindowActive() {
+					label.FontWeight(600)
+				}
+			})
 		}
 	})
 }
 
-// searchField is how a book is found: type a title, press Enter.
+// pane is the work: the unified toolbar across the top and the stage under it.
+func (a *app) pane(c *ui.Context) {
+	ui.Column(c).Grow(1).MinWidth(0).Background(contentBg).Children(func() {
+		a.toolbar(c)
+		a.stage(c)
+	})
+}
+
+// toolbar holds the identity of what is open, the one input, and the action
+// that moves the work forward, as a native toolbar: identity at the leading
+// edge, controls at the trailing one.
+func (a *app) toolbar(c *ui.Context) {
+	ui.Column(c).Shrink(0).Children(func() {
+		ui.Row(c).Height(52).Padding(0, 20, 0, 20).Gap(8).AlignItems(ui.Center).
+			DragWindow().Children(func() {
+			a.toolbarIdentity(c)
+			ui.Spacer(c)
+
+			a.searchField(c)
+
+			a.toolbarIconButton(c, iconHistory, "历史", textSoft, a.openHistory)
+
+			if a.panel != nil && a.panel.State().Loaded {
+				label := "浏览器"
+				if a.panelVisible() {
+					label = "收起浏览器"
+				}
+				a.toolbarIconButton(c, iconGlobe, label, textSoft, func() { a.showBrowser = !a.panelVisible() })
+			}
+			a.topActionButton(c)
+		})
+		ui.Divider(c).Background(separator)
+	})
+}
+
+// searchField is the one input. While a book or the site's page is in front it
+// holds a fresh query rather than the address that opened the book, the way a
+// document window keeps its search field empty until it is used.
 func (a *app) searchField(c *ui.Context) {
-	input := ui.TextInput(c, &a.query).
-		Placeholder("搜索书名，回车开始").
-		FontSize(12).Height(32).Grow(1).MaxWidth(420).
-		Background(cardSunk).Radius(8).
-		PlaceholderColor(textMuted)
-	if input.Submitted() {
-		a.search()
-		a.searchWithTimeout()
+	query := a.session.Input()
+	if a.session.Catalog() != nil || a.panelVisible() {
+		query = &a.searchDraft
+	}
+
+	field := ui.SearchField(c, query).
+		Placeholder("搜索书名或地址").
+		FontSize(13).Height(28).Width(240).Padding(0, 8).
+		Background(fill).Border(0, ui.Transparent).Radius(6)
+	if field.Submitted() {
+		if query != a.session.Input() {
+			*a.session.Input() = *query
+			a.searchDraft = ""
+		}
+		a.session.Submit()
 	}
 }
 
-func (a *app) historyAction(c *ui.Context) {
-	ui.Row(c).Gap(6).Height(32).Padding(0, 10).Radius(8).AlignItems(ui.Center).
-		OnClick(a.openHistory).Children(func() {
-		ui.Text(c, "历史").FontSize(12).TextColor(textSoft)
-		if a.history != nil {
-			if count := a.history.Count(); count > 0 {
-				ui.Text(c, itoa(count)).FontSize(11).TextColor(textFaint)
-			}
+// toolbarIdentity is the book or screen in the toolbar: a small cover when a
+// book is open, its name, and one line of context under it.
+func (a *app) toolbarIdentity(c *ui.Context) {
+	title, subtitle := a.screenTitle()
+
+	ui.Row(c).Grow(1).MinWidth(0).Gap(10).AlignItems(ui.Center).Children(func() {
+		if a.session.Catalog() != nil {
+			catalog := a.session.Catalog()
+			typeCover(c, catalog.Title, 26, 34, 14, "")
 		}
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Text(c, title).FontSize(15).FontWeight(600).TextColor(textMain).MaxLines(1)
+			if subtitle != "" {
+				ui.Text(c, subtitle).FontSize(11).TextColor(textSoft).MaxLines(1)
+			}
+		})
 	})
 }
 
-// topAction is the one primary action, named for the next step.
-func (a *app) topAction() (string, bool, func()) {
+// screenTitle names what the window is showing: the book, the search, the
+// site's page, or the empty library.
+func (a *app) screenTitle() (title, subtitle string) {
+	s := a.session
 	switch {
-	case a.canPause():
-		return "暂停下载", true, a.pauseDownload
-	case a.job.Phase == PhaseFailed && a.catalog != nil && a.next < len(a.catalog.Chapters):
-		return "重试当前章", true, a.resumeDownload
-	case a.canResume():
-		return "继续下载", true, a.resumeDownload
-	case a.job.Phase == PhaseFinished && len(a.chapters) > 0:
-		return "导出 EPUB", true, a.openExportDialog
-	case a.job.Phase == PhaseFailed && len(a.chapters) > 0 && a.catalog != nil && a.next >= len(a.catalog.Chapters):
-		return "导出 EPUB", true, a.openExportDialog
-	case a.catalog != nil && !a.job.Busy():
-		return "开始下载", true, a.startDownload
-	case a.job.Busy():
+	case a.panelVisible():
+		return "浏览器", s.Source().Name
+	case len(s.Hits()) > 0:
+		query := trimParagraph(*s.Input())
+		return "搜索结果", fmt.Sprintf("「%s」", query)
+	case s.Catalog() != nil:
+		catalog := s.Catalog()
+		parts := make([]string, 0, 2)
+		if catalog.Author != "" && catalog.Author != "Unknown" {
+			parts = append(parts, catalog.Author)
+		}
+		parts = append(parts, s.Source().Name)
+		return catalog.Title, strings.Join(parts, " · ")
+	default:
+		return "书库", "把网络小说下载成 EPUB"
+	}
+}
+
+// toolbarButton is a borderless button for the toolbar and the status bar: it
+// takes a face only while the pointer is on it.
+func (a *app) toolbarButton(c *ui.Context, label string, color ui.Color, action func()) {
+	b := ui.Button(c, label).FontSize(12).Height(28).Padding(0, 10).Radius(6).
+		Background(ui.Transparent).Border(0, ui.Transparent).TextColor(color)
+	if b.Hovered() {
+		b.Background(fill)
+	}
+	if b.Clicked() {
+		action()
+	}
+}
+
+// toolbarIconButton is a toolbar control of a drawn icon and a short label,
+// as the history and browser controls in the window's toolbar. It is a real
+// button, so it takes the keyboard focus and assistive technology finds it.
+func (a *app) toolbarIconButton(c *ui.Context, icon *ui.SVG, label string, color ui.Color, action func()) {
+	b := ui.Button(c, "").Label(label).FontSize(12).Height(28).Padding(0, 8).Radius(6).
+		Background(ui.Transparent).Border(0, ui.Transparent)
+	if b.Hovered() {
+		b.Background(fill)
+	}
+	b.Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icon).Size(13, 13).TextColor(color)
+			ui.Text(c, label).FontSize(12).TextColor(color)
+		})
+	})
+	if b.Clicked() {
+		action()
+	}
+}
+
+// miniButton is the smaller borderless button of a list header.
+func (a *app) miniButton(c *ui.Context, label string, color ui.Color, action func()) {
+	b := ui.Button(c, label).FontSize(11).Height(24).Padding(0, 8).Radius(6).
+		Background(ui.Transparent).Border(0, ui.Transparent).TextColor(color)
+	if b.Hovered() {
+		b.Background(fill)
+	}
+	if b.Clicked() {
+		action()
+	}
+}
+
+// topAction is the one primary action, named for the next step. The label
+// follows the phase, so the button never offers to export a book that was
+// already exported.
+func (a *app) topAction() (string, bool, func()) {
+	s := a.session
+	switch {
+	case s.CanPause():
+		return "暂停下载", true, s.pauseDownload
+	case s.CanResume():
+		return "继续下载", true, s.resumeDownload
+	case s.CanStart():
+		return "开始下载", true, s.startDownload
+	case s.phase == PhaseFinished && len(s.chapters) > 0:
+		return "再导出一份", true, a.openExportDialog
+	case s.Busy():
 		return "处理中…", false, nil
 	default:
 		// Nothing to do from the bar: the middle of the window holds the
-		// search, and the bar stays quiet until a run starts.
+		// input, and the bar stays quiet until a run starts.
 		return "", false, nil
 	}
 }
@@ -185,440 +420,484 @@ func (a *app) topActionButton(c *ui.Context) {
 		return
 	}
 	if enabled {
-		ui.PrimaryButton(c, label).FontSize(12).Height(32).Width(96).OnClick(action)
+		ui.PrimaryButton(c, label).FontSize(13).Height(28).Padding(0, 12).
+			OnClick(action)
 		return
 	}
-	ui.Button(c, label).FontSize(12).Height(32).Width(96).Disabled(true)
+	ui.Button(c, label).FontSize(13).Height(28).Padding(0, 12).
+		Background(fill).Border(0, ui.Transparent).TextColor(textFaint).Disabled(true)
 }
 
-// stage is the work in the middle: the search results, the book, or the run.
+// stage is the work in the middle: the results, the book, or the run. The
+// browser panel is placed once, by panelSlot, whichever stage is up.
 func (a *app) stage(c *ui.Context) {
-	ui.Column(c).Grow(1).FillHeight().Padding(0, 16, 0, 16).Children(func() {
+	ui.Column(c).Grow(1).MinHeight(0).Children(func() {
 		switch {
-		case a.searching:
-			a.searchingStage(c)
-		case len(a.hits) > 0:
+		case a.panelVisible():
+			a.browserStage(c)
+		case len(a.session.Hits()) > 0:
 			a.resultsStage(c)
-		case a.catalog != nil:
+		case a.session.Catalog() != nil:
 			a.bookStage(c)
 		default:
 			a.emptyStage(c)
 		}
-		a.hiddenBrowser(c)
 	})
 }
 
-// hiddenBrowser keeps the webview in the tree at all times. Searching and
-// reading a catalog both go through it: it loads the page, runs the site's
-// script, and reports back. A webview that is not in the tree never loads
-// anything, so the search would wait forever.
-func (a *app) hiddenBrowser(c *ui.Context) {
-	if a.session == nil || a.session.view == nil {
+// panelVisible reports whether the site's page is in front. The session says
+// when a human is needed; the window's own toggle can only put it away, never
+// bring it back on its own.
+func (a *app) panelVisible() bool {
+	if a.session.WantsPanel() {
+		return true
+	}
+	return a.showBrowser && a.panel != nil && a.panel.State().Loaded
+}
+
+// browserStage is the site's own page, in front, while a human is needed.
+func (a *app) browserStage(c *ui.Context) {
+	var state PanelState
+	if a.panel != nil {
+		state = a.panel.State()
+	}
+	title := state.Title
+	if title == "" {
+		title = a.session.Source().Name
+	}
+
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).Height(40).Padding(0, 20).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, iconGlobe).Size(13, 13).TextColor(textFaint)
+			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(textMain).MaxLines(1)
+			ui.Text(c, state.Status).FontSize(11).TextColor(textSoft).MaxLines(1)
+			ui.Spacer(c)
+		})
+		ui.Divider(c).Background(separator)
+		a.panelSlot(c)
+	})
+}
+
+// panelSlot places the site's web view. It is the only place that does: the
+// old view placed the same web view twice when a search was running with the
+// panel hidden, and two placements of one web view is undefined.
+func (a *app) panelSlot(c *ui.Context) {
+	if a.panel == nil || a.panel.WebView() == nil {
+		ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+			ui.Text(c, "浏览器会话不可用。").FontSize(13).TextColor(textSoft)
+		})
 		return
 	}
-	if a.showBrowser {
-		return // the panel below draws it
+	if a.panelVisible() {
+		ui.WebView(c, a.panel.WebView()).Grow(1).MinHeight(0)
+		return
 	}
+	// Hidden but placed: a web view that is not in the tree never loads
+	// anything, and both searching and reading a catalog go through it.
 	ui.Box(c).Absolute().Top(0).Left(0).Size(2, 2).Opacity(0.01).Children(func() {
-		ui.WebView(c, a.session.view).Size(2, 2)
+		ui.WebView(c, a.panel.WebView()).Size(2, 2)
 	})
 }
 
-// card is the surface the work sits on.
-func (a *app) card(c *ui.Context, body func()) {
-	ui.Column(c).Grow(1).MinHeight(0).Radius(12).Background(card).
-		Border(1, cardRing).Shadow(0, 1, 3, 0, cardShadow).
-		Shadow(0, 8, 20, -6, cardShadow).
-		ClipInset(0, 0, 0, 0, 12).Children(body)
-}
-
-// emptyStage is the first screen: one search row, then the books already
-// downloaded. The row is a single line of equal-height controls, so it reads
-// as one instrument rather than a field with two loose buttons under it.
+// emptyStage is the first screen: one quiet invitation, since the search
+// field is always in the toolbar.
 func (a *app) emptyStage(c *ui.Context) {
-	var records []HistoryRecord
-	if a.history != nil {
-		records = a.history.List()
+	ui.Column(c).Fill().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+		ui.Column(c).Width(420).AlignItems(ui.Center).Gap(0).Children(func() {
+			ui.Icon(c, iconBookBig).Size(48, 48).TextColor(textFaint)
+			ui.Box(c).Height(16).Shrink(0)
+			ui.Text(c, "搜一本书").FontSize(17).FontWeight(600).TextColor(textMain)
+			ui.Box(c).Height(6).Shrink(0)
+			ui.Text(c, "输入书名，回车。也可以粘贴书籍页或目录页地址。").
+				FontSize(13).TextColor(textSoft).TextAlign(ui.Center).LineHeight(1.5)
+
+			if message := a.session.Message(); message != "" {
+				ui.Box(c).Height(10).Shrink(0)
+				ui.Text(c, message).FontSize(12).TextColor(a.messageColor()).
+					TextAlign(ui.Center).MaxLines(3).LineHeight(1.5)
+			}
+		})
+	})
+}
+
+// messageColor is the tone of the status message: an error reads as one.
+func (a *app) messageColor() ui.Color {
+	if a.session.phase == PhaseFailed {
+		return dangerText
 	}
-
-	ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-		ui.Column(c).Width(640).Gap(20).Children(func() {
-			ui.Column(c).Gap(7).Children(func() {
-				ui.Text(c, "搜一本书").FontSize(26).Bold().
-					TextColor(textMain).LetterSpacing(-0.6)
-				ui.Text(c, "选站点，输入书名，回车。搜到后点一下就开始下载。").FontSize(12).
-					LineHeight(1.7).TextColor(textSoft)
-			})
-
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				a.sourcePicker(c)
-				input := ui.TextInput(c, &a.query).
-					Placeholder("输入书名").
-					FontSize(13).Height(38).Grow(1).Padding(0, 13).
-					Background(card).Radius(9).
-					PlaceholderColor(textMuted)
-				if input.Submitted() {
-					a.search()
-					a.searchWithTimeout()
-				}
-				ui.PrimaryButton(c, "搜索").FontSize(12).Height(38).Width(84).OnClick(func() {
-					a.search()
-					a.searchWithTimeout()
-				})
-			})
-
-			if a.searchError != "" {
-				ui.Text(c, a.searchError).FontSize(12).TextColor(danger).MaxLines(3)
-			}
-
-			if len(records) > 0 {
-				a.recentList(c, records)
-			}
-		})
-	})
+	return textSoft
 }
 
-// recentList is the books already downloaded: a way back to earlier work, and
-// something real under the search so the first screen is not a void.
-func (a *app) recentList(c *ui.Context, records []HistoryRecord) {
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Row(c).Height(30).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "最近下载").FontSize(10).TextColor(textMuted)
-			ui.Spacer(c)
-			ui.Textf(c, "%d 本", len(records)).FontSize(10).TextColor(textMuted)
-		})
-		for i, record := range records {
-			if i >= 6 {
-				break
-			}
-			record := record
-			ui.Row(c).Height(38).Padding(8, 0).Radius(7).Gap(12).AlignItems(ui.Center).
-				OnClick(a.openHistory).Children(func() {
-				ui.Text(c, record.Title).FontSize(12).TextColor(textSoft).Grow(1).MaxLines(1)
-				ui.Text(c, record.ProgressLabel()).FontSize(10).
-					TextColor(textMuted).Width(60).FontFeatures("tnum")
-				ui.Text(c, record.UpdatedAt.Format("01-02")).FontSize(10).
-					TextColor(textMuted).Width(40).FontFeatures("tnum")
-			})
+// listHeader is the small heading above a list, with an optional count and a
+// quiet action at the trailing edge.
+func (a *app) listHeader(c *ui.Context, title, trailing, actionLabel string, action func()) {
+	ui.Row(c).Height(36).Padding(0, 20).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(textSoft)
+		if trailing != "" {
+			ui.Text(c, trailing).FontSize(11).TextColor(textSoft).FontFeatures("tnum")
+		}
+		ui.Spacer(c)
+		if actionLabel != "" && action != nil {
+			a.miniButton(c, actionLabel, textSoft, action)
 		}
 	})
 }
 
-// searchingStage shows the site while it answers. The panel is not decoration:
-// 69shuba sits behind Cloudflare, so the page has to be visible for the check
-// to be solvable, and the results arrive in it.
-func (a *app) searchingStage(c *ui.Context) {
-	a.card(c, func() {
-		ui.Row(c).Height(44).Padding(0, 18).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Textf(c, "正在 %s 搜索「%s」", a.source.Name, a.query).
-				FontSize(13).Bold().TextColor(textMain)
-			ui.Spacer(c)
-			ui.Text(c, "站点要验证时，在下面完成").FontSize(11).TextColor(textFaint)
-		})
-		ui.Divider(c).Background(hairline)
-
-		if a.session != nil && a.session.view != nil {
-			ui.WebView(c, a.session.view).Grow(1).MinHeight(0)
-			return
-		}
-		ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			ui.Text(c, "正在加载站点页面…").FontSize(13).TextColor(textSoft)
-		})
-	})
-}
-
-// resultsStage is what the search found: pick one, and it opens. The list
-// hugs its rows instead of stretching to the window, so three results do not
-// leave a page of empty card under them.
+// resultsStage is what the search found: pick one, and it opens.
 func (a *app) resultsStage(c *ui.Context) {
-	ui.Column(c).Grow(1).AlignItems(ui.Center).Padding(48, 0, 0, 0).Children(func() {
-		ui.Column(c).Width(680).Gap(0).Radius(12).Background(card).
-			Border(1, cardRing).Shadow(0, 1, 3, 0, cardShadow).
-			Shadow(0, 8, 20, -6, cardShadow).Children(func() {
-			ui.Row(c).Height(44).Padding(0, 18).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Textf(c, "「%s」的结果", a.query).FontSize(13).Bold().TextColor(textMain)
-				ui.Textf(c, "%d 本", len(a.hits)).FontSize(11).TextColor(textFaint)
-				ui.Spacer(c)
-				ui.Text(c, "换个词").FontSize(11).TextColor(textSoft).
-					Padding(4, 8).OnClick(a.cancelSearch)
-			})
-			ui.Divider(c).Background(hairline)
+	hits := a.session.Hits()
 
-			for _, hit := range a.hits {
-				hit := hit
-				ui.Row(c).Height(52).Padding(0, 18).Gap(12).AlignItems(ui.Center).
-					OnClick(func() { a.pickHit(hit) }).Children(func() {
-					ui.Column(c).Gap(2).Grow(1).Children(func() {
-						ui.Text(c, hit.Title).FontSize(13).TextColor(textMain).MaxLines(1)
-						if hit.Author != "" {
-							ui.Text(c, hit.Author).FontSize(11).TextColor(textFaint).MaxLines(1)
-						}
+	ui.Column(c).Fill().Children(func() {
+		a.listHeader(c, fmt.Sprintf("%d 个结果", len(hits)), "", "清除", a.session.cancelSearch)
+		ui.Divider(c).Background(separator)
+
+		ui.Scroll(c).Grow(1).Children(func() {
+			ui.Column(c).Children(func() {
+				for i, hit := range hits {
+					hit := hit
+					row := ui.Row(c).Height(44).Padding(0, 20).Gap(12).
+						AlignItems(ui.Center).OnClick(func() { a.session.pickHit(hit) })
+					if row.Hovered() {
+						row.Background(fill)
+					}
+					row.Children(func() {
+						ui.Column(c).Gap(1).Grow(1).MinWidth(0).Children(func() {
+							ui.Text(c, hit.Title).FontSize(13).FontWeight(500).
+								TextColor(textMain).MaxLines(1)
+							if hit.Author != "" {
+								ui.Text(c, hit.Author).FontSize(11).TextColor(textSoft).MaxLines(1)
+							}
+						})
+						ui.Icon(c, iconChevron).Size(11, 11).TextColor(textFaint)
 					})
-					ui.Text(c, "打开").FontSize(11).TextColor(accent)
-				})
-				ui.Divider(c).Background(hairline)
-			}
+					if i < len(hits)-1 {
+						ui.Divider(c).Background(separator).Margin(0, 20, 0, 20)
+					}
+				}
+			})
 		})
 	})
 }
 
-// bookStage is the book once its catalog is read: start it, and watch it run.
+// bookStage is the book once its catalog is read: its progress, its contents,
+// and the run once it starts.
 func (a *app) bookStage(c *ui.Context) {
-	a.card(c, func() {
-		a.bookHeader(c)
-		ui.Divider(c).Background(hairline)
+	catalog := a.session.Catalog()
 
-		if len(a.log) == 0 {
-			a.catalogPreview(c)
-			return
+	ui.Column(c).Fill().Children(func() {
+		if a.showProgress() {
+			a.progressBand(c, a.session.Progress())
 		}
-		ui.List(c, &a.logState, len(a.log), func(i int) {
-			logRow(c, a.log[i])
-		}).Grow(1).MinHeight(0)
-		a.logLive(c)
+
+		switch {
+		case a.session.Phase() == PhaseCatalogReady || len(a.session.Log()) == 0:
+			a.catalogPreview(c, catalog)
+		default:
+			log := a.session.Log()
+			a.listHeader(c, "下载记录", fmt.Sprintf("%d 章", len(a.session.Chapters())), "", nil)
+			ui.Divider(c).Background(separator)
+			ui.List(c, &a.logState, len(log), func(i int) {
+				a.logRow(c, log[i])
+			}).Grow(1).MinHeight(0)
+		}
 
 		if a.showRail() {
-			ui.Divider(c).Background(hairline)
+			ui.Divider(c).Background(separator)
 			a.rail(c)
 		}
 	})
 }
 
-// bookHeader is the book's name and how far the run has got.
-func (a *app) bookHeader(c *ui.Context) {
-	ui.Column(c).Gap(10).Padding(16, 20, 14, 20).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
-				ui.Text(c, a.catalog.Title).FontSize(15).Bold().
-					TextColor(textMain).MaxLines(1)
-				meta := fmt.Sprintf("%d 章", len(a.catalog.Chapters))
-				if a.catalog.Author != "" && a.catalog.Author != "Unknown" {
-					meta = a.catalog.Author + " · " + meta
-				}
-				ui.Text(c, meta).FontSize(11).TextColor(textFaint).MaxLines(1)
-			})
-			if a.session.view != nil && a.session.State().Loaded {
-				label := "显示浏览器"
-				if a.showBrowser {
-					label = "收起浏览器"
-				}
-				ui.Button(c, label).FontSize(11).OnClick(func() { a.showBrowser = !a.showBrowser })
-			}
-		})
+// showProgress reports whether the run has progress worth a band.
+func (a *app) showProgress() bool {
+	if a.session.Progress() == nil {
+		return false
+	}
+	switch a.session.Phase() {
+	case PhaseDownloading, PhasePaused:
+		return true
+	case PhaseFailed:
+		return len(a.session.Chapters()) > 0
+	}
+	return false
+}
 
-		if snap := a.job.Snap; snap != nil {
-			ui.Row(c).AlignItems(ui.Baseline).Gap(5).Children(func() {
-				ui.Text(c, itoa(snap.Completed)).FontSize(26).Bold().
-					TextColor(textMain).FontFeatures("tnum").LetterSpacing(-1)
-				ui.Text(c, "/"+itoa(snap.Total)).FontSize(12).
-					TextColor(textFaint).FontFeatures("tnum")
-				ui.Spacer(c)
+// progressBand is how far the run has got: the count, the percentage, the pace
+// and the remaining time over one thin native progress bar.
+func (a *app) progressBand(c *ui.Context, snap *Progress) {
+	pct := int(snap.Fraction()*100 + 0.5)
+
+	ui.Column(c).Padding(10, 20).Gap(6).Children(func() {
+		ui.Row(c).AlignItems(ui.Baseline).Gap(6).Children(func() {
+			ui.Text(c, itoa(snap.Completed)).FontSize(15).FontWeight(600).
+				TextColor(textMain).FontFeatures("tnum")
+			ui.Textf(c, "/ %d 章", snap.Total).FontSize(11).
+				TextColor(textSoft).FontFeatures("tnum")
+			ui.Textf(c, "%d%%", pct).FontSize(11).
+				TextColor(textSoft).FontFeatures("tnum")
+			ui.Spacer(c)
+			if a.session.Phase() == PhaseDownloading {
 				if pace := a.paceLabel(snap); pace != "" {
-					ui.Text(c, pace).FontSize(11).TextColor(textFaint).FontFeatures("tnum")
+					ui.Text(c, pace).FontSize(11).TextColor(textSoft).FontFeatures("tnum")
 				}
 				if eta := a.etaLabel(snap); eta != "" {
-					ui.Text(c, "· 约 "+eta).FontSize(11).TextColor(textFaint).FontFeatures("tnum")
+					ui.Text(c, "剩余 "+eta).FontSize(11).TextColor(textSoft).FontFeatures("tnum")
 				}
-				ui.Textf(c, "%d%%", int(snap.Fraction()*100+0.5)).FontSize(12).
-					TextColor(accent).FontFeatures("tnum")
-			})
-			ui.Progress(c, snap.Fraction()).Height(4).TextColor(accent).Background(progressBg)
-		}
+			}
+		})
+		ui.Progress(c, snap.Fraction()).Height(3).Radius(1.5).
+			Background(progressBg).TextColor(accent)
 	})
+	ui.Divider(c).Background(separator)
 }
 
 // catalogPreview is the book's contents before a run.
-func (a *app) catalogPreview(c *ui.Context) {
-	chapters := a.catalog.Chapters
-	ui.Column(c).Grow(1).MinHeight(0).Children(func() {
-		ui.Row(c).Height(32).Padding(0, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "章节").FontSize(10).TextColor(textMuted)
-			ui.Spacer(c)
-			ui.Textf(c, "共 %d 章", len(chapters)).FontSize(10).
-				TextColor(textMuted).FontFeatures("tnum")
+func (a *app) catalogPreview(c *ui.Context, catalog *BookCatalog) {
+	chapters := catalog.Chapters
+
+	a.listHeader(c, "目录", fmt.Sprintf("共 %d 章", len(chapters)), "", nil)
+	ui.Divider(c).Background(separator)
+
+	ui.List(c, nil, len(chapters), func(i int) {
+		chapter := chapters[i]
+		ui.Row(c).Height(32).Padding(0, 20).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, chapter.Title).FontSize(13).TextColor(textMain).Grow(1).MaxLines(1)
 		})
-		ui.List(c, nil, len(chapters), func(i int) {
-			chapter := chapters[i]
-			ui.Row(c).Height(26).Padding(0, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Textf(c, "%03d", chapter.Order).FontSize(10).
-					TextColor(textMuted).Width(28).FontFeatures("tnum")
-				ui.Text(c, chapter.Title).FontSize(11).TextColor(textSoft).Grow(1).MaxLines(1)
-			})
-		}).Grow(1).MinHeight(0)
-	})
+		ui.Divider(c).Background(separator).Margin(0, 20, 0, 20)
+	}).Grow(1).MinHeight(0)
 }
 
-// logLive is the chapter the crawler is on right now.
-func (a *app) logLive(c *ui.Context) {
-	snap := a.job.Snap
-	if snap == nil || !a.running {
-		return
+// logIcon picks the mark for one line of the run: a drawn icon per kind,
+// never a text glyph, so the column reads at a glance.
+func logIcon(kind LogKind) (icon *ui.SVG, color ui.Color) {
+	switch kind {
+	case LogChapter:
+		return iconCheck, textFaint
+	case LogDone:
+		return iconCheck, successText
+	case LogRetry:
+		return iconRetry, warningText
+	case LogFallback:
+		return iconSwap, warningText
+	case LogWarn:
+		return iconWarn, warningText
+	case LogError:
+		return iconError, dangerText
 	}
-	ui.Divider(c).Background(hairline)
-	ui.Row(c).Height(30).Padding(0, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, time.Now().Format("15:04:05")).FontSize(10).
-			TextColor(textMuted).Width(56).FontFeatures("tnum")
-		ui.Text(c, "▸").FontSize(10).TextColor(accent).Width(12)
-		ui.Textf(c, "%03d  %s", snap.CurrentIndex, snap.CurrentTitle).
-			FontSize(11).TextColor(textMain).Grow(1).MaxLines(1)
-		if snap.Transport == TransportBrowser {
-			ui.Text(c, "浏览器").FontSize(10).TextColor(warning)
-		}
-	})
+	return iconInfo, textFaint
 }
 
 // logRow is one line of the run: when, what, and how long it took.
-func logRow(c *ui.Context, line LogLine) {
-	mark, markColor := "·", textMuted
+func (a *app) logRow(c *ui.Context, line LogLine) {
+	icon, markColor := logIcon(line.Kind)
 	textColor := textSoft
 	switch line.Kind {
-	case LogChapter:
-		mark, markColor, textColor = "✓", success, textSoft
-	case LogRetry:
-		mark, markColor, textColor = "↻", warning, warning
-	case LogFallback:
-		mark, markColor, textColor = "⇄", warning, textMain
-	case LogWarn:
-		mark, markColor, textColor = "‖", warning, warning
+	case LogChapter, LogDone, LogFallback:
+		textColor = textMain
 	case LogError:
-		mark, markColor, textColor = "!", danger, danger
-	case LogDone:
-		mark, markColor, textColor = "✓", success, textMain
-	case LogInfo:
-		mark, markColor, textColor = "›", textFaint, textMain
+		textColor = dangerText
+	case LogWarn, LogRetry:
+		textColor = warningText
+	}
+	detailColor := textSoft
+	switch line.Kind {
+	case LogError:
+		detailColor = dangerText
+	case LogWarn, LogRetry, LogFallback:
+		detailColor = warningText
 	}
 
-	ui.Row(c).Height(23).Padding(0, 20).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, line.At.Format("15:04:05")).FontSize(10).
-			TextColor(textMuted).Width(56).FontFeatures("tnum")
-		ui.Text(c, mark).FontSize(10).TextColor(markColor).Width(12)
-		ui.Text(c, line.Text).FontSize(11).TextColor(textColor).Grow(1).MaxLines(1)
+	text := line.Text
+	if line.Kind == LogChapter {
+		// The line leads with the chapter's order, and the title usually
+		// carries it again; keep the title alone.
+		if i := strings.Index(text, "  "); i > 0 {
+			digits := true
+			for _, r := range text[:i] {
+				if r < '0' || r > '9' {
+					digits = false
+					break
+				}
+			}
+			if digits {
+				text = text[i+2:]
+			}
+		}
+	}
+
+	ui.Row(c).Height(28).Padding(0, 20).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, line.At.Format("15:04:05")).FontSize(11).
+			TextColor(textSoft).Width(52).FontFeatures("tnum")
+		ui.Icon(c, icon).Size(12, 12).TextColor(markColor).Width(16)
+		ui.Text(c, text).FontSize(12).TextColor(textColor).Grow(1).MaxLines(1)
 		if line.Detail != "" {
-			ui.Text(c, line.Detail).FontSize(10).TextColor(warning).MaxLines(1)
+			ui.Text(c, line.Detail).FontSize(11).TextColor(detailColor).MaxLines(1)
 		}
 		if line.Took > 0 {
-			ui.Text(c, shortDuration(line.Took)).FontSize(10).
-				TextColor(textMuted).Width(40).TextAlign(ui.End).FontFeatures("tnum")
+			ui.Text(c, shortDuration(line.Took)).FontSize(11).
+				TextColor(textSoft).Width(44).TextAlign(ui.End).FontFeatures("tnum")
 		}
 	})
 }
 
-// rail is the run's outcome and what can be done about it.
+// rail is the status bar at the bottom: what the run is doing now, or how it
+// ended, and what can be done about it.
 func (a *app) rail(c *ui.Context) {
-	showStatus := a.job.Phase == PhasePaused || a.job.Phase == PhaseFailed || a.job.Phase == PhaseFinished
-	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 20).Children(func() {
-		if showStatus {
-			ui.Box(c).Size(6, 6).Radius(3).Background(railColor(a.job.Phase))
-			ui.Column(c).Gap(1).Grow(1).Children(func() {
-				ui.Text(c, a.railTitle()).FontSize(12).Bold().TextColor(railColor(a.job.Phase))
-				if message := a.railMessage(); message != "" {
-					ui.Text(c, message).FontSize(11).TextColor(textFaint).MaxLines(2)
+	s := a.session
+
+	ui.Row(c).Height(52).Padding(0, 20).Gap(10).AlignItems(ui.Center).Children(func() {
+		switch {
+		case s.phase == PhaseDownloading:
+			snap := s.Progress()
+			ui.Spinner(c).Size(12, 12)
+			ui.Text(c, "正在下载").FontSize(12).FontWeight(600).TextColor(textMain)
+			if snap != nil {
+				ui.Text(c, snap.CurrentTitle).FontSize(12).TextColor(textSoft).
+					Grow(1).MaxLines(1)
+				if snap.Transport == TransportBrowser {
+					ui.Text(c, "浏览器").FontSize(11).TextColor(warningText)
+				}
+			} else {
+				ui.Spacer(c)
+			}
+		case s.phase.Outcome():
+			ui.Box(c).Size(7, 7).Radius(3.5).Shrink(0).Background(railColor(s.phase))
+			ui.Column(c).Gap(1).Grow(1).MinWidth(0).Children(func() {
+				ui.Text(c, railTitle(s.phase)).FontSize(12).FontWeight(600).TextColor(railColor(s.phase))
+				if message := a.railDetail(); message != "" {
+					ui.Text(c, message).FontSize(11).
+						TextColor(textSoft).MaxLines(1)
 				}
 			})
-		} else {
+		default:
 			ui.Spacer(c)
 		}
 
-		if a.job.Phase == PhaseFailed && !a.running && a.catalog != nil && a.next < len(a.catalog.Chapters) {
-			ui.Button(c, "跳过当前章").FontSize(11).OnClick(a.skipChapter)
-			ui.Button(c, "从头重下").FontSize(11).OnClick(a.restartDownload)
+		if s.CanSkip() {
+			a.toolbarButton(c, "跳过当前章", textSoft, s.skipChapter)
 		}
-		if a.canExportSession() {
-			ui.Button(c, "导出当前内容").FontSize(11).OnClick(a.openExportDialog)
-		}
-		if len(a.chapters) > 0 {
-			ui.Button(c, "查看已下载章节").FontSize(11).OnClick(func() { a.showChapters = true })
-		}
-		if a.running || a.job.Phase == PhasePaused || a.job.Phase == PhaseFailed {
-			ui.Text(c, "停止并清空").FontSize(11).TextColor(textMuted).
-				Padding(4, 8).OnClick(func() { a.pendingStop = true })
+		if a.railHasMenu() {
+			more := ui.Button(c, "").Label("更多").FontSize(12).Height(28).Width(28).
+				Padding(0).Background(ui.Transparent).Border(0, ui.Transparent)
+			if more.Hovered() {
+				more.Background(fill)
+			}
+			more.Children(func() {
+				ui.Icon(c, iconMore).Size(14, 14).TextColor(textSoft)
+			})
+			more.PopoverMenuButton(func(m *ui.Menu) {
+				if len(s.Chapters()) > 0 {
+					if m.Item("查看已下载章节").Chosen() {
+						a.editChapters = false
+						a.showChapters = true
+					}
+				}
+				if s.CanExport() && !s.CanStart() && s.phase != PhaseFinished {
+					if m.Item("导出当前内容").Chosen() {
+						a.openExportDialog()
+					}
+				}
+				switch s.phase {
+				case PhaseDownloading, PhasePaused, PhaseFailed:
+					m.Separator()
+					if m.Item("从头重下").Chosen() {
+						s.startDownload()
+					}
+					if m.Item("停止并清空").Danger().Chosen() {
+						a.pendingStop = true
+					}
+				}
+			}, ui.PopoverMenuButtonOptions{At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd})
 		}
 	})
 }
 
-func railColor(phase JobPhase) ui.Color {
+// railHasMenu reports whether the status bar has secondary actions to fold
+// into its more menu.
+func (a *app) railHasMenu() bool {
+	s := a.session
+	if len(s.Chapters()) > 0 {
+		return true
+	}
+	if s.CanExport() && !s.CanStart() && s.phase != PhaseFinished {
+		return true
+	}
+	switch s.phase {
+	case PhaseDownloading, PhasePaused, PhaseFailed:
+		return true
+	}
+	return false
+}
+
+func railColor(phase Phase) ui.Color {
 	switch phase {
 	case PhaseFailed:
-		return danger
+		return dangerText
 	case PhasePaused:
-		return warning
+		return warningText
 	case PhaseFinished:
-		return success
+		return successText
 	default:
 		return textSoft
 	}
 }
 
-func (a *app) railTitle() string {
-	switch a.job.Phase {
-	case PhaseFailed:
-		return "需要处理"
-	case PhasePaused:
-		return "下载已暂停"
+// railTitle is the short state the status bar leads with, plainer than the
+// phase's own name.
+func railTitle(phase Phase) string {
+	switch phase {
 	case PhaseFinished:
-		return "下载已完成"
+		return "已导出"
+	case PhaseFailed:
+		return "下载中断"
+	case PhasePaused:
+		return "已暂停"
+	case PhaseStopped:
+		return "已停止"
 	default:
-		return "当前会话"
+		return phase.Title()
 	}
 }
 
-func (a *app) railMessage() string {
-	switch a.job.Phase {
-	case PhaseFailed:
-		if snap := a.job.Snap; snap != nil && snap.Completed > 0 {
-			return fmt.Sprintf("已完成 %d / %d 章，可继续、跳过当前章，或先导出当前内容。", snap.Completed, snap.Total)
-		}
-		if len(a.chapters) > 0 && a.catalog != nil {
-			return fmt.Sprintf("已完成 %d / %d 章，可继续、跳过当前章，或先导出当前内容。",
-				len(a.chapters), len(a.catalog.Chapters))
-		}
-		return "当前还没有成功章节，可以继续、跳过当前章或重新开始整次下载。"
-	case PhasePaused:
-		if snap := a.job.Snap; snap != nil {
-			return fmt.Sprintf("当前会话已保留 %d / %d 章。", snap.Completed, snap.Total)
-		}
-		return "当前会话已保留。"
+// railDetail is the line under the state, without repeating it: the file name
+// for a finished export, the chapter that failed, or nothing while paused,
+// since the progress band already shows what was kept.
+func (a *app) railDetail() string {
+	s := a.session
+	switch s.phase {
 	case PhaseFinished:
-		return a.job.Message
-	default:
+		if saved := s.LastSaved(); saved != "" {
+			return filepath.Base(saved)
+		}
+	case PhasePaused:
+		return ""
+	case PhaseFailed:
+		if progress := s.Progress(); progress != nil && progress.CurrentTitle != "" {
+			return progress.CurrentTitle
+		}
 		return ""
 	}
+	detail := firstLine(s.statusDetail())
+	detail = strings.TrimPrefix(detail, railTitle(s.phase))
+	detail = strings.TrimPrefix(detail, "EPUB 已导出：")
+	detail = strings.TrimPrefix(detail, "EPUB 已导出:")
+	return strings.TrimLeft(detail, "，。:： ")
 }
 
-// statusBar closes the window along its bottom edge.
-func (a *app) statusBar(c *ui.Context) {
-	state := a.session.State()
-	ui.Row(c).Height(28).Padding(0, 16).Gap(16).AlignItems(ui.Center).Children(func() {
-		chip := func(label, value string) {
-			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, label).FontSize(10).TextColor(textMuted)
-				ui.Text(c, value).FontSize(10).TextColor(textFaint).FontFeatures("tnum")
-			})
-		}
-		chip("站点", a.source.Name)
-		chip("会话", itoa(state.Cookies))
-		if a.history != nil {
-			chip("缓存", humanBytes(a.history.ByteCount()))
-		}
-		ui.Spacer(c)
-		ui.Text(c, "仅抓取你有权访问的公开页面").FontSize(10).TextColor(textMuted)
-	})
-}
-
-// reading is one small labelled figure.
-func (a *app) reading(c *ui.Context, label, value string) {
-	ui.Row(c).Gap(5).AlignItems(ui.Baseline).Children(func() {
-		ui.Text(c, label).FontSize(10).TextColor(textMuted).SingleLine()
-		ui.Text(c, value).FontSize(11).TextColor(textSoft).FontFeatures("tnum").SingleLine()
-	})
+// firstLine is the headline of a multi-line message.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func (a *app) paceLabel(snap *Progress) string {
-	done := snap.Completed - a.startCount
-	if a.startedAt.IsZero() || done < 2 {
+	done := snap.Completed - a.session.startCount
+	if a.session.startedAt.IsZero() || done < 2 {
 		return ""
 	}
-	elapsed := time.Since(a.startedAt)
+	elapsed := time.Since(a.session.startedAt)
 	if elapsed <= 0 {
 		return ""
 	}
@@ -631,11 +910,11 @@ func (a *app) paceLabel(snap *Progress) string {
 
 func (a *app) etaLabel(snap *Progress) string {
 	left := snap.Total - snap.Completed
-	done := snap.Completed - a.startCount
-	if left <= 0 || a.startedAt.IsZero() || done < 3 {
+	done := snap.Completed - a.session.startCount
+	if left <= 0 || a.session.startedAt.IsZero() || done < 3 {
 		return ""
 	}
-	elapsed := time.Since(a.startedAt)
+	elapsed := time.Since(a.session.startedAt)
 	if elapsed <= 0 {
 		return ""
 	}
@@ -643,26 +922,56 @@ func (a *app) etaLabel(snap *Progress) string {
 	return shortDuration(per * time.Duration(left))
 }
 
-func shortDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()+0.5))
+// showRail reports whether the run has an outcome worth a bar.
+func (a *app) showRail() bool {
+	switch a.session.Phase() {
+	case PhaseDownloading, PhasePaused, PhaseFinished, PhaseFailed, PhaseStopped:
+		return true
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()+0.5))
-	}
-	hours := int(d.Hours())
-	minutes := int(d.Minutes()) - hours*60
-	if minutes == 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-	return fmt.Sprintf("%dh%dm", hours, minutes)
+	return len(a.session.Chapters()) > 0
 }
 
-// sectionLabel frames a block of a dialog.
-func sectionLabel(c *ui.Context, label string) {
-	ui.Text(c, label).FontSize(11).TextColor(textFaint)
+// sheet lays a dialog out as a macOS sheet: attached to the toolbar's bottom
+// edge, centred, over the window's own content with no dimming, rounded only
+// at the bottom and shadowed only where it hangs free.
+func (a *app) sheet(c *ui.Context, open *bool, fn func()) {
+	ui.DialogBase(c, open, func(backdrop, sheet ui.Element) {
+		backdrop.Background(ui.Transparent).
+			Justify(ui.Start).AlignItems(ui.Center).Padding(52, 0, 0, 0)
+		sheet.Padding(24).Radius(0, 0, 12, 12).Background(contentBg).
+			Shadow(0, 22, 60, -18, sheetShadow)
+		fn()
+	})
 }
 
+// sheetTitle is the one heading every sheet starts with.
+func sheetTitle(c *ui.Context, title, subtitle string) {
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Text(c, title).FontSize(15).FontWeight(600).TextColor(textMain)
+		if subtitle != "" {
+			ui.Text(c, subtitle).FontSize(11).TextColor(textSoft)
+		}
+	})
+}
+
+func fieldLabel(c *ui.Context, label string) ui.Element {
+	return ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(textSoft)
+}
+
+// typeCover is the cover a book gets when it has no image: the first
+// character set in the paper's own gray, the same at every size, so the
+// toolbar, the history and the export sheet identify the book alike.
+func typeCover(c *ui.Context, title string, width, height, size float32, caption string) {
+	ui.Column(c).Size(width, height).Radius(4).Background(fill).
+		AlignItems(ui.Center).Justify(ui.Center).Gap(6).Children(func() {
+		ui.Text(c, firstRune(title)).FontSize(size).FontWeight(600).TextColor(textSoft)
+		if caption != "" {
+			ui.Text(c, caption).FontSize(11).TextColor(textSidebar)
+		}
+	})
+}
+
+// firstRune is the character a typographic cover shows.
 func firstRune(title string) string {
 	if runes := []rune(trimParagraph(title)); len(runes) > 0 {
 		return string(runes[0])
@@ -671,26 +980,21 @@ func firstRune(title string) string {
 }
 
 func (a *app) exportDialog(c *ui.Context) {
-	ui.DialogBase(c, &a.showExport, func(backdrop, sheet ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.55))
-		sheet.Padding(20).Radius(12).Background(card).Border(1, cardRing).
-			Shadow(0, 24, 60, -8, ui.RGBA(0, 0, 0, 0.55))
+	a.sheet(c, &a.showExport, func() {
+		ui.Column(c).Width(520).Gap(18).Children(func() {
+			sheetTitle(c, "导出设置", "书名、作者和封面会写进 EPUB 的首页。")
 
-		ui.Column(c).Width(600).Gap(16).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
-				ui.Text(c, "导出设置").FontSize(15).Bold().TextColor(textMain)
-				ui.Text(c, "书名、作者和封面会写进 EPUB 的首页。").FontSize(11).TextColor(textFaint)
-			})
-
-			ui.Row(c).Gap(22).AlignItems(ui.Start).Children(func() {
-				ui.Column(c).Grow(1).Gap(14).Children(func() {
+			ui.Row(c).Gap(20).AlignItems(ui.Start).Children(func() {
+				ui.Column(c).Grow(1).Gap(12).Children(func() {
 					ui.Column(c).Gap(5).Children(func() {
-						sectionLabel(c, "作者")
-						ui.TextInput(c, &a.draft.Author).Placeholder("作者").FontSize(12).Height(28)
+						fieldLabel(c, "作者")
+						ui.TextInput(c, &a.draft.Author).Placeholder("作者").
+							FontSize(13).Height(30).Padding(0, 9).Radius(6).
+							Background(contentBg).Border(1, separatorStrong)
 					})
 
 					ui.Column(c).Gap(5).Children(func() {
-						sectionLabel(c, "正文字体")
+						fieldLabel(c, "正文字体")
 						fonts := make([]string, len(FontPresets))
 						for i, preset := range FontPresets {
 							fonts[i] = preset.DisplayName()
@@ -698,95 +1002,100 @@ func (a *app) exportDialog(c *ui.Context) {
 						if a.exportFont == "" {
 							a.exportFont = a.draft.BodyFont.DisplayName()
 						}
-						ui.Select(c, &a.exportFont, fonts).FontSize(12).Height(28)
+						ui.Select(c, &a.exportFont, fonts).FontSize(13).Height(30).Radius(6).
+							Background(fill).Border(0, ui.Transparent)
 					})
 
 					ui.Column(c).Gap(5).Children(func() {
-						sectionLabel(c, "首页说明")
+						fieldLabel(c, "首页说明")
 						ui.TextInput(c, &a.draft.FrontText).Placeholder(defaultFrontPageBodyText).
-							Multiline(true).MinHeight(60).FontSize(12)
-						ui.Checkbox(c, &a.draft.ShowSource, "首页显示来源链接").FontSize(11)
+							Multiline(true).MinHeight(72).FontSize(13).Padding(8, 9).
+							Radius(6).Background(contentBg).Border(1, separatorStrong)
+						ui.Checkbox(c, &a.draft.ShowSource, "首页显示来源链接").FontSize(12)
 					})
 				})
 
-				ui.Column(c).Width(140).Gap(7).Children(func() {
-					sectionLabel(c, "封面")
+				ui.Column(c).Width(120).Gap(8).Children(func() {
+					fieldLabel(c, "封面")
 					if a.coverPreview != nil {
-						ui.Image(c, a.coverPreview).Size(140, 187).Radius(6).Border(1, cardRing)
+						ui.Image(c, a.coverPreview).Size(120, 160).Radius(6).Border(1, separator)
 					} else {
-						ui.Column(c).Size(140, 187).Radius(6).Background(cardSunk).
-							AlignItems(ui.Center).Justify(ui.Center).Gap(5).Children(func() {
-							ui.Text(c, firstRune(a.draft.Title)).FontSize(30).Bold().TextColor(textMuted)
-							ui.Text(c, "未选择封面").FontSize(10).TextColor(textMuted)
-						})
+						typeCover(c, a.draft.Title, 120, 160, 44, "未选择封面")
 					}
 					label := "选择封面"
 					if len(a.draft.CoverImage) > 0 {
 						label = "更换封面"
 					}
-					ui.Button(c, label).FontSize(11).OnClick(a.importCover)
+					ui.Button(c, label).FontSize(11).Height(26).OnClick(a.importCover)
 					if len(a.draft.CoverImage) > 0 {
-						ui.Button(c, "移除封面").FontSize(11).OnClick(a.removeCover)
+						remove := ui.Button(c, "移除封面").FontSize(11).Height(26).
+							Background(ui.Transparent).Border(0, ui.Transparent).TextColor(textSoft)
+						if remove.Hovered() {
+							remove.Background(fill)
+						}
+						remove.OnClick(a.removeCover)
 					}
 				})
 			})
 
-			ui.Divider(c).Background(hairline)
+			ui.Divider(c).Background(separator)
 
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				ui.Button(c, "取消").FontSize(11).OnClick(func() { a.showExport = false })
-				ui.PrimaryButton(c, "导出 EPUB").FontSize(11).OnClick(a.confirmExport)
+				ui.Button(c, "取消").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(func() { a.showExport = false })
+				ui.PrimaryButton(c, "导出 EPUB").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(a.confirmExport)
 			})
 		})
 	})
 }
 
 func (a *app) historyDialog(c *ui.Context) {
-	height := float32(180 + min(len(a.historyList), 5)*40)
-	ui.DialogBase(c, &a.showHistory, func(backdrop, sheet ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.55))
-		sheet.Padding(20).Radius(12).Background(card).Border(1, cardRing).
-			Shadow(0, 24, 60, -8, ui.RGBA(0, 0, 0, 0.55))
+	height := float32(360 + max(0, min(len(a.historyList), 5)-3)*40)
 
-		ui.Column(c).Width(720).Height(height).Gap(14).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
-				ui.Text(c, "下载历史").FontSize(15).Bold().TextColor(textMain)
-				ui.Text(c, "每次下载都会存一份快照，可以随时重新导出。").FontSize(11).TextColor(textFaint)
-			})
+	a.sheet(c, &a.showHistory, func() {
+		ui.Column(c).Width(660).Height(height).Gap(16).Children(func() {
+			sheetTitle(c, "下载历史", "每次下载都会存一份快照，可以随时重新导出。")
 
-			ui.Row(c).Grow(1).Gap(18).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Width(220).Gap(1).Children(func() {
+			ui.Row(c).Grow(1).MinHeight(0).Gap(12).AlignItems(ui.Stretch).Children(func() {
+				ui.Column(c).Width(200).Gap(1).Children(func() {
 					if len(a.historyList) == 0 {
-						ui.Text(c, "还没有记录").FontSize(12).TextColor(textSoft)
-						ui.Text(c, "开始一次下载后，这里会保存可再次导出的 EPUB 快照。").FontSize(11).TextColor(textFaint)
+						ui.Text(c, "还没有记录").FontSize(12).TextColor(textSoft).Padding(4, 6)
 						return
 					}
 					ui.Scroll(c).Grow(1).Children(func() {
 						ui.Column(c).Gap(1).Children(func() {
 							for _, record := range a.historyList {
+								record := record
 								selected := record.ID == a.selectedID
-								row := ui.Row(c).Height(44).Padding(8, 0).Radius(7).Gap(8).AlignItems(ui.Center).Children(func() {
-									ui.Column(c).Gap(1).Grow(1).Children(func() {
-										color := textSoft
-										if selected {
-											color = textMain
-										}
-										ui.Text(c, record.Title).FontSize(12).TextColor(color).MaxLines(1)
-										ui.Textf(c, "%s · %s", record.ProgressLabel(), record.UpdatedAt.Format("01-02")).
-											FontSize(10).TextColor(textMuted)
-									})
-								}).OnClick(func() { a.selectHistory(record.ID) })
-								if selected {
-									row.Background(cardSunk)
+								row := ui.Row(c).Height(44).Padding(5, 8).Radius(6).Gap(8).
+									AlignItems(ui.Center).OnClick(func() { a.selectHistory(record.ID) })
+								switch {
+								case selected:
+									row.Background(accent)
+								case row.Hovered():
+									row.Background(fillStrong)
 								}
+								row.Children(func() {
+									ui.Column(c).Gap(1).Grow(1).MinWidth(0).Children(func() {
+										titleColor, metaColor := textMain, textSoft
+										if selected {
+											titleColor, metaColor = accentInk, accentInk
+										}
+										ui.Text(c, record.Title).FontSize(12).
+											TextColor(titleColor).MaxLines(1)
+										ui.Textf(c, "%s · %s", record.ProgressLabel(), record.UpdatedAt.Format("01-02")).
+											FontSize(11).TextColor(metaColor).FontFeatures("tnum")
+									})
+								})
 							}
 						})
 					})
 				})
 
-				ui.Divider(c).Background(hairline)
+				ui.Box(c).Width(1).Shrink(0).Background(separator)
 
-				ui.Column(c).Grow(1).Gap(10).Children(func() {
+				ui.Column(c).Grow(1).MinWidth(0).Gap(12).Children(func() {
 					record, ok := a.selectedRecord()
 					if !ok {
 						ui.Spacer(c)
@@ -797,19 +1106,22 @@ func (a *app) historyDialog(c *ui.Context) {
 
 					ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 						if a.historyCover != nil {
-							ui.Image(c, a.historyCover).Size(84, 112).Radius(5).Border(1, cardRing)
+							ui.Image(c, a.historyCover).Size(64, 85).Radius(6).Border(1, separator)
+						} else {
+							typeCover(c, record.Title, 64, 85, 28, "")
 						}
-						ui.Column(c).Gap(3).Grow(1).Children(func() {
-							ui.Text(c, record.Title).FontSize(14).Bold().TextColor(textMain).MaxLines(2)
+						ui.Column(c).Gap(3).Grow(1).MinWidth(0).Children(func() {
+							ui.Text(c, record.Title).FontSize(15).FontWeight(600).
+								TextColor(textMain).MaxLines(2)
 							if record.Author != "" && record.Author != "Unknown" {
-								ui.Text(c, record.Author).FontSize(11).TextColor(textSoft)
+								ui.Text(c, record.Author).FontSize(12).TextColor(textSoft)
 							}
 							ui.Textf(c, "%s · %s", completeLabel(record), record.SourceHost()).
-								FontSize(10).TextColor(accent)
+								FontSize(11).TextColor(textSoft)
 						})
 					})
 
-					ui.Column(c).Gap(5).Children(func() {
+					ui.Column(c).Gap(6).Children(func() {
 						detailRow(c, "进度", record.ProgressLabel())
 						detailRow(c, "更新", record.UpdatedAt.Format("2006-01-02 15:04"))
 						detailRow(c, "创建", record.CreatedAt.Format("2006-01-02 15:04"))
@@ -817,20 +1129,25 @@ func (a *app) historyDialog(c *ui.Context) {
 
 					ui.Text(c, historyMessage(record)).FontSize(11).LineHeight(1.6).TextColor(textSoft)
 					if a.historyError != "" {
-						ui.Text(c, a.historyError).FontSize(11).TextColor(danger)
+						ui.Text(c, a.historyError).FontSize(11).TextColor(dangerText)
 					}
 				})
 			})
 
-			ui.Divider(c).Background(hairline)
+			ui.Divider(c).Background(separator)
 
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Button(c, "关闭").FontSize(11).OnClick(func() { a.showHistory = false })
-				ui.Button(c, "删除记录").FontSize(11).TextColor(danger).Disabled(a.selectedID == "").
-					OnClick(func() { a.pendingDelete = true })
+				ui.Button(c, "关闭").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(func() { a.showHistory = false })
+				b := ui.Button(c, "删除记录").FontSize(12).Height(28).Padding(0, 12).
+					TextColor(dangerText).Disabled(a.selectedID == "")
+				if b.Clicked() {
+					a.pendingDelete = true
+				}
 				ui.Spacer(c)
 				_, ok := a.selectedRecord()
-				ui.PrimaryButton(c, "导出 EPUB").FontSize(11).Disabled(!ok).OnClick(a.exportHistory)
+				ui.PrimaryButton(c, "导出 EPUB").FontSize(12).Height(28).Padding(0, 12).
+					Disabled(!ok).OnClick(a.exportHistory)
 			})
 		})
 	})
@@ -855,86 +1172,91 @@ func historyMessage(record HistoryRecord) string {
 
 func detailRow(c *ui.Context, title, value string) {
 	ui.Row(c).Gap(10).Children(func() {
-		ui.Text(c, title).FontSize(10).TextColor(textMuted).Width(36)
-		ui.Text(c, value).FontSize(11).TextColor(textMain).Grow(1)
+		ui.Text(c, title).FontSize(11).TextColor(textSoft).Width(36)
+		ui.Text(c, value).FontSize(12).TextColor(textMain).Grow(1)
 	})
 }
 
 func (a *app) chaptersDialog(c *ui.Context) {
-	height := float32(170 + min(len(a.chapters), 6)*34)
-	ui.DialogBase(c, &a.showChapters, func(backdrop, sheet ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.55))
-		sheet.Padding(20).Radius(12).Background(card).Border(1, cardRing).
-			Shadow(0, 24, 60, -8, ui.RGBA(0, 0, 0, 0.55))
+	chapters := a.session.Chapters()
+	height := float32(210 + min(len(chapters), 6)*33)
 
-		ui.Column(c).Width(520).Height(height).Gap(12).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
-				ui.Text(c, "已下载章节").FontSize(15).Bold().TextColor(textMain)
-				ui.Text(c, "删除只影响导出，不回退下载进度").FontSize(11).TextColor(textFaint)
-			})
+	a.sheet(c, &a.showChapters, func() {
+		ui.Column(c).Width(460).Height(height).Gap(14).Children(func() {
+			sheetTitle(c, "已下载章节",
+				fmt.Sprintf("共 %d 章 · 删除只影响导出，不回退下载进度", len(chapters)))
 
-			ui.Textf(c, "%d 章", len(a.chapters)).FontSize(11).TextColor(textMuted)
-
-			ui.List(c, nil, len(a.chapters), func(i int) {
-				chapter := a.chapters[i]
-				ui.Row(c).Padding(6, 0).Height(32).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Textf(c, "%03d", chapter.Order).FontSize(10).
-						TextColor(textMuted).Width(28).FontFeatures("tnum")
-					ui.Text(c, chapter.Title).FontSize(12).TextColor(textMain).Grow(1).MaxLines(1)
-					if !a.job.Busy() {
-						ui.Text(c, "移除").FontSize(11).TextColor(textSoft).
-							Padding(4, 6).OnClick(func() { a.removeChapter(chapter.Order) })
+			ui.List(c, nil, len(chapters), func(i int) {
+				chapter := chapters[i]
+				ui.Row(c).Padding(0, 4).Height(32).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, chapter.Title).FontSize(13).TextColor(textMain).Grow(1).MaxLines(1)
+					if a.editChapters && !a.session.Busy() {
+						remove := ui.Button(c, "移除").FontSize(11).Height(24).Padding(0, 8).
+							Background(ui.Transparent).Border(0, ui.Transparent).TextColor(dangerText)
+						if remove.Hovered() {
+							remove.Background(fill)
+						}
+						if remove.Clicked() {
+							a.session.removeChapter(chapter.Order)
+						}
 					}
 				})
-				ui.Divider(c).Background(hairline)
+				ui.Divider(c).Background(separator)
 			}).Grow(1)
 
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				ui.Button(c, "关闭").FontSize(11).OnClick(func() { a.showChapters = false })
+			ui.Divider(c).Background(separator)
+
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				if len(chapters) > 0 && !a.session.Busy() {
+					label := "编辑"
+					if a.editChapters {
+						label = "完成"
+					}
+					ui.Button(c, label).FontSize(12).Height(28).Padding(0, 12).
+						OnClick(func() { a.editChapters = !a.editChapters })
+				}
+				ui.Spacer(c)
+				ui.Button(c, "关闭").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(func() { a.showChapters = false; a.editChapters = false })
 			})
 		})
 	})
 }
 
 func (a *app) stopAlert(c *ui.Context) {
-	switch ui.AlertDialog(c, &a.pendingStop, "停止并清空这次下载？",
-		"已下载的章节会保留在下载历史里，当前进度会清空。", "取消", "停止并清空") {
-	case 1:
-		a.stopDownload()
-	}
+	a.sheet(c, &a.pendingStop, func() {
+		ui.Column(c).Width(380).Gap(16).Children(func() {
+			sheetTitle(c, "停止并清空这次下载？",
+				"已下载的章节会保留在下载历史里，当前进度会清空。")
+			ui.Divider(c).Background(separator)
+			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				ui.Button(c, "取消").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(func() { a.pendingStop = false })
+				ui.Button(c, "停止并清空").FontSize(12).Height(28).Padding(0, 12).
+					TextColor(dangerText).OnClick(func() {
+					a.session.stopDownload()
+					a.pendingStop = false
+				})
+			})
+		})
+	})
 }
 
 func (a *app) deleteAlert(c *ui.Context) {
-	switch ui.AlertDialog(c, &a.pendingDelete, "删除这条历史记录？",
-		"这会删除应用内保存的历史快照，不会删除你已经导出的本地 EPUB 文件。", "取消", "删除记录") {
-	case 1:
-		a.deleteHistory()
-	}
+	a.sheet(c, &a.pendingDelete, func() {
+		ui.Column(c).Width(420).Gap(16).Children(func() {
+			sheetTitle(c, "删除这条历史记录？",
+				"这会删除应用内保存的历史快照，不会删除你已经导出的本地 EPUB 文件。")
+			ui.Divider(c).Background(separator)
+			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				ui.Button(c, "取消").FontSize(12).Height(28).Padding(0, 12).
+					OnClick(func() { a.pendingDelete = false })
+				ui.Button(c, "删除").FontSize(12).Height(28).Padding(0, 12).
+					TextColor(dangerText).OnClick(func() {
+					a.deleteHistory()
+					a.pendingDelete = false
+				})
+			})
+		})
+	})
 }
-
-// humanBytes formats a byte count the way Finder does.
-func humanBytes(n int64) string {
-	units := []string{"B", "KB", "MB", "GB"}
-	value := float64(n)
-	unit := 0
-	for value >= 1024 && unit < len(units)-1 {
-		value /= 1024
-		unit++
-	}
-	if unit == 0 {
-		return fmt.Sprintf("%d %s", n, units[unit])
-	}
-	return fmt.Sprintf("%.1f %s", value, units[unit])
-}
-
-// showRail reports whether the run has an outcome worth a bar.
-func (a *app) showRail() bool {
-	switch a.job.Phase {
-	case PhasePaused, PhaseFinished, PhaseFailed:
-		return true
-	}
-	return len(a.chapters) > 0
-}
-
-var _ = filepath.Base
-var _ = strings.TrimSpace

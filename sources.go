@@ -37,6 +37,11 @@ type Source struct {
 	ChapterDelayMin       time.Duration
 	ChapterDelayMax       time.Duration
 
+	// NormalizeCatalog turns a book page, catalog page or chapter page into
+	// the catalog page that lists every chapter, or nil when the address is
+	// not this site's. It is a field, like SearchURL, so a test can point a
+	// source at a local site.
+	NormalizeCatalog func(*url.URL) *url.URL
 	// SearchURL builds the page that searches this site for a title. The
 	// search runs in the browser panel, because the sites either sit behind
 	// Cloudflare, take a POST form, or fill their results with script.
@@ -63,6 +68,7 @@ var Sources = []Source{
 		MaxRateLimitWait: 10,
 		ChapterDelayMin:  1500 * time.Millisecond,
 		ChapterDelayMax:  3 * time.Second,
+		NormalizeCatalog: shuba69CatalogURL,
 		SearchURL:        shuba69SearchURL,
 		ParseSearch:      parseShuba69Search,
 	},
@@ -81,6 +87,7 @@ var Sources = []Source{
 		RetryRateLimitForever: true,
 		ChapterDelayMin:       400 * time.Millisecond,
 		ChapterDelayMax:       900 * time.Millisecond,
+		NormalizeCatalog:      piaotianCatalogURL,
 		SearchURL:             piaotianSearchURL,
 		ParseSearch:           parsePiaotianSearch,
 	},
@@ -101,6 +108,7 @@ var Sources = []Source{
 		MaxRateLimitWait:  10,
 		ChapterDelayMin:   300 * time.Millisecond,
 		ChapterDelayMax:   700 * time.Millisecond,
+		NormalizeCatalog:  sto9CatalogURL,
 		SearchURL:         sto9SearchURL,
 		ParseSearch:       parseSto9Search,
 	},
@@ -114,18 +122,6 @@ func SourceFor(kind SourceKind) Source {
 		}
 	}
 	return Sources[0]
-}
-
-// PersistsCookie reports whether a cookie of the domain belongs to the
-// site's session.
-func (s Source) PersistsCookie(domain string) bool {
-	lowered := strings.ToLower(domain)
-	for _, d := range s.CookieDomains {
-		if strings.Contains(lowered, d) {
-			return true
-		}
-	}
-	return false
 }
 
 // OwnPage reports whether the URL is a page of the site.
@@ -154,15 +150,10 @@ func (s Source) CatalogURL(rawURL string) *url.URL {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return nil
 	}
-	switch s.Kind {
-	case SourceShuba69:
-		return shuba69CatalogURL(u)
-	case SourcePiaotian:
-		return piaotianCatalogURL(u)
-	case SourceSto9:
-		return sto9CatalogURL(u)
+	if s.NormalizeCatalog == nil {
+		return nil
 	}
-	return nil
+	return s.NormalizeCatalog(u)
 }
 
 // shuba69CatalogURL turns a book page, catalog page or chapter page into the

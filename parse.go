@@ -9,6 +9,16 @@ import (
 	"github.com/longbridgeapp/opencc"
 )
 
+// The patterns this file uses are compiled once. A chapter page runs
+// stripTags and decodeEntities over thousands of fragments, and compiling a
+// regular expression per call was the hot path of the whole parse.
+var (
+	reTags        = regexp.MustCompile(`(?s)<[^>]+>`)
+	reNumericRef  = regexp.MustCompile(`&#(x?[0-9A-Fa-f]+);`)
+	reWhitespace  = regexp.MustCompile(`\s+`)
+	reIdentityBad = regexp.MustCompile(`[　\s\-—_:：,，。！？；、"'“”‘’（）()\[\]【】《》<>·]+`)
+)
+
 // firstMatch returns the first capture group of the pattern in s.
 func firstMatch(pattern, s string) (string, bool) {
 	re, err := regexp.Compile("(?is)" + pattern)
@@ -58,26 +68,26 @@ func replaceMatches(pattern, s, replacement string) string {
 
 // stripTags removes HTML tags.
 func stripTags(s string) string {
-	return removeMatches(`<[^>]+>`, s)
+	return reTags.ReplaceAllString(s, "")
 }
+
+// entityReplacer is the named entities the sites use, resolved in one pass.
+var entityReplacer = strings.NewReplacer(
+	"&nbsp;", " ",
+	"&ensp;", " ",
+	"&emsp;", " ",
+	"&quot;", `"`,
+	"&apos;", "'",
+	"&lt;", "<",
+	"&gt;", ">",
+	"&amp;", "&",
+	"&#39;", "'",
+)
 
 // decodeEntities turns the HTML entities of s into their characters.
 func decodeEntities(s string) string {
-	r := strings.NewReplacer(
-		"&nbsp;", " ",
-		"&ensp;", " ",
-		"&emsp;", " ",
-		"&quot;", `"`,
-		"&apos;", "'",
-		"&lt;", "<",
-		"&gt;", ">",
-		"&amp;", "&",
-		"&#39;", "'",
-	)
-	s = r.Replace(s)
-
-	re := regexp.MustCompile(`&#(x?[0-9A-Fa-f]+);`)
-	return re.ReplaceAllStringFunc(s, func(m string) string {
+	s = entityReplacer.Replace(s)
+	return reNumericRef.ReplaceAllStringFunc(s, func(m string) string {
 		token := m[2 : len(m)-1]
 		base := 10
 		if strings.HasPrefix(strings.ToLower(token), "x") {
@@ -194,18 +204,22 @@ func isNoiseParagraph(line string) bool {
 	if trimmed == "" || trimmed == "()" || trimmed == "（）" || trimmed == ">" {
 		return true
 	}
-	for _, token := range []string{
-		"上一章", "下一章", "返回目录", "返回书页", "我的书架", "将本书加入书架",
-		"章节错误", "点此举报", "返回顶部", "fontbig", "PT文学", "书籍介绍",
-		"收藏本书", "加入书签", "69书吧", "最新网址", "请收藏", "手机用户请浏览",
-		"笔趣阁", "纯文字在线阅读", "获取最新章节更新", "还有更新耶", "sto9.com",
-		"𝘴𝘵𝘰9.𝘤𝘰𝘮", "看最新章节", "无弹窗", "首页 >", "還有更新耶", "獲取最新章節更新", "繁体最新章节",
-	} {
+	for _, token := range noiseTokens {
 		if strings.Contains(trimmed, token) {
 			return true
 		}
 	}
 	return false
+}
+
+// noiseTokens are the site chrome strings the three sites wrap around a
+// chapter. They are checked on every line of every page.
+var noiseTokens = []string{
+	"上一章", "下一章", "返回目录", "返回书页", "我的书架", "将本书加入书架",
+	"章节错误", "点此举报", "返回顶部", "fontbig", "PT文学", "书籍介绍",
+	"收藏本书", "加入书签", "69书吧", "最新网址", "请收藏", "手机用户请浏览",
+	"笔趣阁", "纯文字在线阅读", "获取最新章节更新", "还有更新耶", "sto9.com",
+	"𝘴𝘵𝘰9.𝘤𝘰𝘮", "看最新章节", "无弹窗", "首页 >", "還有更新耶", "獲取最新章節更新", "繁体最新章节",
 }
 
 // removeLeadingTitles removes paragraphs that repeat the chapter title.
@@ -227,12 +241,12 @@ func removeLeadingTitles(paragraphs []string, title string, identity func(string
 // identityTitle normalizes a title for comparison.
 func identityTitle(s string) string {
 	s = identityHeading(s)
-	return strings.ToLower(replaceMatches(`[　\s\-\—_:：,，。！？；、"'“”‘’（）()\[\]【】《》<>·]+`, s, ""))
+	return strings.ToLower(reIdentityBad.ReplaceAllString(s, ""))
 }
 
 // identityHeading normalizes a heading for comparison.
 func identityHeading(s string) string {
-	return replaceMatches(`\s+`, s, "")
+	return reWhitespace.ReplaceAllString(s, "")
 }
 
 // chapterHTML builds the XHTML body of a chapter from its paragraphs.

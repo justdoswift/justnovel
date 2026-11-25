@@ -122,11 +122,14 @@ func packageDocument(settings ExportSettings, chapters []Chapter) string {
 		manifest = append(manifest, fmt.Sprintf(`<item id="cover-image" href="%s" media-type="%s" properties="cover-image"/>`,
 			xmlEscaped(coverFileName(settings)), xmlEscaped(settings.CoverType)))
 	}
+	// The manifest id is the chapter's position in the spine, not its order
+	// number: a book with a skipped chapter can hold two chapters whose order
+	// collides, and a duplicate id is an invalid EPUB.
 	spine := []string{`<itemref idref="title"/>`}
-	for _, chapter := range chapters {
+	for i, chapter := range chapters {
 		manifest = append(manifest, fmt.Sprintf(`<item id="chapter-%d" href="%s" media-type="application/xhtml+xml"/>`,
-			chapter.Order, chapterFileName(chapter.Order)))
-		spine = append(spine, fmt.Sprintf(`<itemref idref="chapter-%d"/>`, chapter.Order))
+			i+1, chapterFileName(chapter.Order)))
+		spine = append(spine, fmt.Sprintf(`<itemref idref="chapter-%d"/>`, i+1))
 	}
 
 	var b strings.Builder

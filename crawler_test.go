@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -18,8 +19,8 @@ import (
 )
 
 func TestHistorySavesAndReloads(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "history.json")
-	h := NewHistory(path)
+	dir := filepath.Join(t.TempDir(), "history")
+	h := NewHistory(dir)
 
 	id, err := h.Save(HistoryRecord{
 		Title:         "极道天魔",
@@ -44,7 +45,7 @@ func TestHistorySavesAndReloads(t *testing.T) {
 	}
 
 	h.MarkExported(id, "极道天魔-partial-1-of-567.epub")
-	reloaded := NewHistory(path)
+	reloaded := NewHistory(dir)
 	record, ok := reloaded.Get(id)
 	if !ok {
 		t.Fatal("the record did not survive a reload")
@@ -61,6 +62,65 @@ func TestHistorySavesAndReloads(t *testing.T) {
 	}
 	if len(reloaded.List()) != 0 {
 		t.Error("the record survived deletion")
+	}
+}
+
+// TestHistoryDedupesBySourceURL checks that downloading the same book twice
+// leaves one entry, not two.
+func TestHistoryDedupesBySourceURL(t *testing.T) {
+	h := NewHistory(filepath.Join(t.TempDir(), "history"))
+	const source = "https://www.69shuba.com/book/90028/"
+
+	first, err := h.Save(HistoryRecord{
+		Title: "极道天魔", SourceURL: source, TotalChapters: 10,
+		Chapters: []Chapter{{Title: "第一章", Order: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.Save(HistoryRecord{
+		Title: "极道天魔", SourceURL: source, TotalChapters: 10,
+		Chapters: []Chapter{{Title: "第一章", Order: 1}, {Title: "第二章", Order: 2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first != second {
+		t.Errorf("second save made a new record: %q then %q", first, second)
+	}
+	list := h.List()
+	if len(list) != 1 {
+		t.Fatalf("%d records, want the book stored once", len(list))
+	}
+	if list[0].Downloaded != 2 {
+		t.Errorf("downloaded = %d, want the newer save", list[0].Downloaded)
+	}
+}
+
+// TestHistoryMigratesTheOldFile checks the single-file history is read once
+// and kept as a .bak.
+func TestHistoryMigratesTheOldFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "history")
+	legacy := filepath.Join(dir, "history.json")
+	if err := writeFileAtomic(legacy, []byte(`[{"id":"old-1","title":"旧书","sourceURL":"https://sto9.com/book/1/index.html","totalChapters":3,"chapters":[{"title":"第一章","order":1}],"createdAt":"2026-01-02T03:04:05Z","updatedAt":"2026-01-02T03:04:05Z"}]`)); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHistory(dir)
+	list := h.List()
+	if len(list) != 1 || list[0].Title != "旧书" || list[0].ProgressLabel() != "1 / 3" {
+		t.Fatalf("migrated list = %+v", list)
+	}
+	record, ok := h.Get("old-1")
+	if !ok || len(record.Chapters) != 1 {
+		t.Fatalf("migrated record = %+v", record)
+	}
+	if _, err := os.Stat(legacy + ".bak"); err != nil {
+		t.Errorf("the old file was not kept as .bak: %v", err)
+	}
+	if _, err := os.Stat(legacy); err == nil {
+		t.Error("the old file is still in place")
 	}
 }
 

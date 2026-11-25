@@ -2,523 +2,442 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
 )
 
-// sessionView is what the view reads of the browser panel.
-type sessionView struct {
-	Status    string
-	Title     string
-	LastError string
-	Loading   bool
-	Manual    bool
-	Cookies   int
-	Loaded    bool
+// Session owns the work: the site, the book, the run, and the phase they are
+// in. It is the only place that decides what the app is doing.
+//
+// Phase is the single source of truth. "Is it busy", "can it pause", "does the
+// browser have to be in front" are all derived from it. The old app kept a
+// Phase plus five independent booleans that each meant something similar, and
+// the catalog load deadlocked because two of them disagreed about whether the
+// app was busy.
+//
+// Concurrency: mu guards every field below. The public methods lock; the
+// *Locked helpers assume the lock is already held, so a method can call
+// another without deadlocking. Goroutines reach the state through update,
+// which is the one funnel that takes the lock and then redraws.
+type Session struct {
+	mu sync.Mutex
+
+	win     *mygo.Window
+	panel   Panel
+	history *History
+
+	source Source
+	phase  Phase
+
+	// message and detail explain the phase to the user.
+	message string
+	detail  string
+
+	// input is what the user typed: a title to search, or an address to open.
+	// The text field writes it directly on the UI thread, which is why it is
+	// exposed as a pointer rather than through a setter.
+	input string
+
+	hits    []SearchHit
+	catalog *BookCatalog
+
+	chapters []Chapter
+	next     int
+	recordID string
+
+	// navSeq numbers the page load the app is waiting for. A load event that
+	// belongs to an older navigation is ignored, so a slow page from a
+	// previous attempt cannot read a catalog the user no longer wants.
+	navSeq int
+
+	cancel context.CancelFunc
+	// stopping tells the download goroutine that the run was stopped on
+	// purpose, rather than paused. It is atomic because the goroutine reads it
+	// while the UI thread writes it, without taking the lock.
+	stopping atomic.Bool
+
+	// progress is the run's snapshot. It is written with the phase, never on
+	// its own, so a stale snapshot cannot outlive the run it describes.
+	progress *Progress
+
+	// log is the run's execution log, newest last: what the crawler did, in
+	// the order it did it.
+	log    []LogLine
+	logSeq int
+
+	// startedAt and startCount time the run, so the sheet can estimate what
+	// is left from the pace it has actually kept.
+	startedAt  time.Time
+	startCount int
+
+	lastSaved string
+	lastErr   error
+
 }
 
-// browserSession is the site's browser panel: it holds the page the user
-// verifies in, hands the app its cookies, and fetches pages the plain HTTP
-// client may not.
-type browserSession struct {
-	mu        sync.Mutex
-	win       *mygo.Window
-	view      *mygo.WebView
-	source    Source
-	status    string
-	title     string
-	lastError string
-	loading   bool
-	manual    bool
-	notified  bool
-	loaded    bool
-	cookies   int
-	userAgent string
-
-	// onLoaded runs once each time a page finishes loading, so the app can
-	// read the catalog without making the user press a second button.
-	onLoaded func()
-	// onManual runs when the site demands a human, so the app can bring the
-	// browser forward at the one moment it is actually needed.
-	onManual func()
-	// pendingQuery is a search to submit through the site's own form once the
-	// page has loaded, for a site whose search is a POST.
-	pendingQuery string
+// NewSession starts a session on a site, with nothing open.
+func NewSession(win *mygo.Window, panel Panel, history *History, source Source) *Session {
+	return &Session{win: win, panel: panel, history: history, source: source, phase: PhaseIdle}
 }
 
-func newBrowserSession(win *mygo.Window, view *mygo.WebView, source Source) *browserSession {
-	s := &browserSession{
-		win:       win,
-		view:      view,
-		source:    source,
-		status:    "等待打开目录页",
-		title:     source.SessionTitle,
-		userAgent: "JustNovel",
-	}
-	if view != nil {
-		view.Page().OnDidFinishLoad(func() {
-			s.mu.Lock()
-			loading, manual := s.loading, s.manual
-			onLoaded := s.onLoaded
-			query := s.pendingQuery
-			s.pendingQuery = ""
-			s.mu.Unlock()
-			if !loading || manual {
-				return
-			}
-			s.set("页面已加载。确认内容后同步会话。", false)
-
-			// A site whose search is a POST is searched by filling its own
-			// form once the page it lives on has loaded.
-			if query != "" {
-				s.submitSearchForm(query)
-				return
-			}
-
-			// A site that blocks the request answers with its own error page,
-			// which looks loaded; name it instead of letting the user try to
-			// sync a page that holds no catalog.
-			go func() {
-				text := strings.ToLower(s.eval("document.body ? document.body.innerText.slice(0, 600) : ''"))
-				for _, marker := range []string{"page not found", "403 forbidden", "access denied", "just a moment"} {
-					if strings.Contains(text, marker) {
-						s.set("站点返回了拦截页，请完成验证或更换站点。", false)
-						return
-					}
-				}
-				if onLoaded != nil {
-					onLoaded()
-				}
-			}()
-		})
-		view.Page().OnDidFailLoad(func(err *mygo.LoadError) {
-			s.mu.Lock()
-			loading := s.loading
-			s.lastError = err.Description
-			s.mu.Unlock()
-			if loading {
-				s.set("页面加载失败，请重试。", false)
-			}
-		})
-		view.Page().OnPageTitleUpdated(func(e *mygo.TitleEvent) {
-			s.mu.Lock()
-			s.title = e.Title
-			s.mu.Unlock()
-
-			lowered := strings.ToLower(e.Title)
-			if strings.Contains(lowered, "page not found") || strings.Contains(lowered, "just a moment") {
-				s.set("站点返回了拦截页，请完成验证。", false)
-			}
-		})
-	}
-	return s
-}
-
-func (s *browserSession) State() sessionView {
+// Source is the site the session reads.
+func (s *Session) Source() Source {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return sessionView{Status: s.status, Title: s.title, LastError: s.lastError,
-		Loading: s.loading, Manual: s.manual, Cookies: s.cookies, Loaded: s.loaded}
+	return s.source
 }
 
-func (s *browserSession) Configure(source Source) {
-	s.mu.Lock()
-	s.source = source
-	s.title = source.SessionTitle
-	s.status = "等待打开目录页"
-	s.lastError = ""
-	s.manual = false
-	s.loaded = false
-	s.mu.Unlock()
-}
-
-func (s *browserSession) set(status string, loading bool) {
-	s.mu.Lock()
-	s.status = status
-	s.loading = loading
-	s.mu.Unlock()
-	s.invalidate()
-}
-
-func (s *browserSession) invalidate() {
-	if s.win != nil {
-		s.win.Invalidate()
-	}
-}
-
-// Open shows the page in the panel, where the user solves the site's
-// verification.
-func (s *browserSession) Open(page string) {
-	s.mu.Lock()
-	s.lastError = ""
-	s.manual = false
-	s.notified = false
-	s.loaded = true
-	s.status = "正在打开目录页，请确认页面正常显示。"
-	s.loading = true
-	s.mu.Unlock()
-
-	if s.view != nil {
-		_ = s.view.Page().LoadURL(page)
-	}
-	s.invalidate()
-}
-
-// ResetManual clears the verification notice.
-func (s *browserSession) ResetManual() {
-	s.mu.Lock()
-	s.manual = false
-	s.notified = false
-	s.mu.Unlock()
-}
-
-// OnLoaded sets what runs when a page finishes loading.
-func (s *browserSession) OnLoaded(fn func()) {
-	s.mu.Lock()
-	s.onLoaded = fn
-	s.mu.Unlock()
-}
-
-// OnManual sets what runs when the site demands a human.
-func (s *browserSession) OnManual(fn func()) {
-	s.mu.Lock()
-	s.onManual = fn
-	s.mu.Unlock()
-}
-
-// HTML is the page the panel is showing, as the site sent it.
-func (s *browserSession) HTML() string {
-	return s.eval("document.documentElement.outerHTML")
-}
-
-// URL is the address the panel is showing.
-func (s *browserSession) URL() string {
-	return s.eval("location.href")
-}
-
-// SubmitSearchAfterLoad fills the site's own search form and submits it, for a
-// site whose search is a POST the panel cannot be pointed at directly.
-func (s *browserSession) SubmitSearchAfterLoad(query string) {
-	s.mu.Lock()
-	s.pendingQuery = query
-	s.mu.Unlock()
-}
-
-// submitSearchForm types the query into the site's search box and submits the
-// form, which is how a POST search has to be started from inside the page.
-func (s *browserSession) submitSearchForm(query string) {
-	script := fmt.Sprintf(`(function(){
-		var q = %q;
-		var input = document.querySelector('input[name="searchkey"]');
-		if (!input) { return 'no-input'; }
-		input.value = q;
-		var form = input.form;
-		if (form) { form.submit(); return 'submitted'; }
-		return 'no-form';
-	})()`, query)
-	s.eval(script)
-}
-
-func (s *browserSession) eval(script string) string {
-	if s.view == nil {
-		return ""
-	}
-	value, err := s.view.Page().Eval(script)
-	if err != nil {
-		return ""
-	}
-	if str, ok := value.(string); ok {
-		return str
-	}
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprint(value)
-}
-
-// Sync reads the panel's cookies and page, after loading a lazily built
-// catalog if the site has one.
-func (s *browserSession) Sync(ctx context.Context) (html string, cookies []*http.Cookie, agent string, err error) {
-	s.set("正在同步会话...", true)
-
-	if err := s.expandCatalog(ctx); err != nil {
-		return "", nil, "", err
-	}
-
-	html = s.eval("document.documentElement.outerHTML")
-	cookies = s.Cookies()
-	agent = s.eval("navigator.userAgent")
-	if agent == "" {
-		agent = "JustNovel"
-	}
-
-	title := s.eval("document.title")
-	if title == "" {
-		title = s.source.SessionTitle
-	}
-
-	s.mu.Lock()
-	s.userAgent = agent
-	s.cookies = len(cookies)
-	s.loading = false
-	s.loaded = html != ""
-	s.title = title
-	if len(cookies) == 0 {
-		s.status = "页面会话已同步。"
-	} else {
-		s.status = fmt.Sprintf("已同步 %d 个 Cookie。", len(cookies))
-	}
-	s.manual = false
-	s.notified = false
-	s.mu.Unlock()
-	s.invalidate()
-
-	return html, cookies, agent, nil
-}
-
-// Cookies reads the site's cookies from the app's cookie store, HTTPOnly
-// ones included.
-func (s *browserSession) Cookies() []*http.Cookie {
-	var out []*http.Cookie
-	seen := map[string]bool{}
-	for _, domain := range s.source.CookieDomains {
-		list, err := mygo.Cookies.List(mygo.CookieFilter{Domain: domain})
-		if err != nil {
-			continue
-		}
-		for _, c := range list {
-			key := c.Name + "|" + c.Domain + "|" + c.Path
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			cookie := &http.Cookie{
-				Name:     c.Name,
-				Value:    c.Value,
-				Path:     c.Path,
-				Domain:   c.Domain,
-				Secure:   c.Secure,
-				HttpOnly: c.HTTPOnly,
-			}
-			if !c.Expires.IsZero() {
-				cookie.Expires = c.Expires
-			}
-			out = append(out, cookie)
-		}
-	}
-	return out
-}
-
-// Agent is the browser's user agent, for the HTTP client's requests.
-func (s *browserSession) Agent() string {
+// Phase is what the session is doing right now.
+func (s *Session) Phase() Phase {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.userAgent == "" {
-		return "JustNovel"
-	}
-	return s.userAgent
+	return s.phase
 }
 
-// expandCatalog clicks the site's button that loads the whole chapter list,
-// and waits for it to finish.
-func (s *browserSession) expandCatalog(ctx context.Context) error {
-	button := s.source.ExpandButton
-	if button == "" || s.view == nil {
-		return nil
-	}
-
-	script := fmt.Sprintf(`(() => {
-		const button = document.getElementById(%q);
-		if (!button) return 'ready';
-		if (!(button.textContent || '').includes('正在')) button.click();
-		return 'waiting';
-	})()`, button)
-	if s.eval(script) == "ready" {
-		return nil
-	}
-
-	s.set("正在加载完整目录...", true)
-	for i := 0; i < 60; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
-		if s.eval(fmt.Sprintf(`document.getElementById(%q) ? 'waiting' : 'ready'`, button)) == "ready" {
-			return nil
-		}
-	}
-	// The site's complete-catalog endpoint is the fallback: sto9's adapter
-	// reads it directly, so a button that never settles must not block the
-	// sync.
-	s.set("完整目录按钮没有响应，继续读取目录...", true)
-	return nil
-}
-
-// LoadHTML navigates the panel to a page and returns the HTML the browser
-// rendered, waiting out Cloudflare's checks.
-func (s *browserSession) LoadHTML(ctx context.Context, page string) (string, error) {
-	if s.view == nil {
-		return "", DownloadError{"浏览器会话不可用。"}
-	}
+// Busy reports whether the session blocks a new piece of work. It asks the
+// phase, so there is exactly one answer.
+func (s *Session) Busy() bool {
 	s.mu.Lock()
-	s.loaded = true
-	s.mu.Unlock()
-
-	if sameNavigation(s.eval("location.href"), page) {
-		html := s.eval("document.documentElement.outerHTML")
-		if html != "" && !looksLikeChallengePage(html) {
-			return html, nil
-		}
-	}
-
-	// Once the browser has passed the site's verification, a same-origin
-	// fetch carries its cookies and fingerprint without navigating the
-	// panel away from the catalog. It is much faster than loading every
-	// chapter as a page, and falls back to a navigation when the site
-	// refuses it.
-	if html, ok := s.fetchInPage(ctx, page); ok {
-		return html, nil
-	}
-
-	s.set("正在通过浏览器会话加载 "+fileNameOf(page)+"...", true)
-	if err := s.view.Page().LoadURL(page); err != nil {
-		return "", DownloadError{"浏览器会话没有成功发起加载。"}
-	}
-
-	deadline := time.Now().Add(45 * time.Second)
-	challenges := 0
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(400 * time.Millisecond):
-		}
-
-		html := s.eval("document.documentElement.outerHTML")
-		current := s.eval("location.href")
-		if html == "" {
-			continue
-		}
-		if looksLikeChallengePage(html) {
-			challenges++
-			s.set("站点正在完成 Cloudflare 验证，等待自动跳转...", true)
-			if challenges >= 3 {
-				s.markManualVerification()
-			}
-			continue
-		}
-		ready := s.eval("document.readyState")
-		if ready != "complete" && ready != "interactive" {
-			continue
-		}
-		if current != "" && s.source.OwnPage(current) && !sameNavigation(current, page) {
-			continue
-		}
-		s.mu.Lock()
-		s.loading = false
-		s.manual = false
-		s.status = "浏览器会话已拿到章节内容。"
-		s.mu.Unlock()
-		s.invalidate()
-		return html, nil
-	}
-
-	return "", SessionError{"浏览器会话仍停留在 Cloudflare 挑战页。请先在浏览器面板完成验证后重试。"}
+	defer s.mu.Unlock()
+	return s.phase.Busy()
 }
 
-// fetchInPage reads a page with the browser's own fetch, so the request
-// carries the session's cookies and browser fingerprint without navigating
-// the panel. It reports false when the site refuses the fetch or answers
-// with a challenge, in which case LoadHTML navigates to the page.
-func (s *browserSession) fetchInPage(ctx context.Context, page string) (string, bool) {
-	if s.view == nil {
-		return "", false
-	}
-	current := s.eval("location.href")
-	if current == "" || current == "about:blank" {
-		return "", false
-	}
-
-	script := fmt.Sprintf(`try {
-		const response = await fetch(%q, {
-			credentials: 'include',
-			redirect: 'follow',
-			headers: {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'}
-		});
-		const text = await response.text();
-		return {status: response.status, url: response.url, text: text};
-	} catch (error) {
-		return {status: 0, url: '', text: '', error: String(error)};
-	}`, page)
-
-	value, err := s.view.Page().EvalContext(ctx, script)
-	if err != nil {
-		return "", false
-	}
-	result, ok := value.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	status, _ := result["status"].(float64)
-	text, _ := result["text"].(string)
-	if status < 200 || status >= 300 || text == "" || looksLikeChallengePage(text) {
-		return "", false
-	}
-
+// Message is the phase's headline detail, when it has one.
+func (s *Session) Message() string {
 	s.mu.Lock()
-	s.loading = false
-	s.manual = false
-	s.status = "浏览器会话已拿到章节内容。"
-	s.mu.Unlock()
-	s.invalidate()
-	return text, true
+	defer s.mu.Unlock()
+	return s.message
 }
 
-func (s *browserSession) markManualVerification() {
+// Detail is the longer explanation under the headline.
+func (s *Session) Detail() string {
 	s.mu.Lock()
-	first := !s.notified
-	s.manual = true
-	s.notified = true
-	s.status = "检测到 Cloudflare 验证，请在浏览器面板完成验证。"
-	onManual := s.onManual
-	s.mu.Unlock()
-	s.invalidate()
-
-	// The one moment the browser has to be in front of the user.
-	if onManual != nil {
-		onManual()
-	}
-
-	if first && mygo.NotificationsSupported() {
-		note := mygo.NewNotification(mygo.NotificationOptions{
-			Title: "需要完成 Cloudflare 验证",
-			Body:  "检测到站点触发了 Cloudflare 验证，请在浏览器面板中完成人工验证，然后重新同步会话或继续下载。",
-		})
-		go func() { _ = note.Show() }()
-	}
+	defer s.mu.Unlock()
+	return s.detail
 }
 
-// sameNavigation compares two URLs by host and path, ignoring the query and
-// the fragment.
-func sameNavigation(a, b string) bool {
-	ua, ub := mustParseURL(a), mustParseURL(b)
-	if ua.Host == "" || ub.Host == "" {
+// Input is the text field's binding: a title, or an address.
+func (s *Session) Input() *string { return &s.input }
+
+// Hits are the books the last search found.
+func (s *Session) Hits() []SearchHit {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hits
+}
+
+// Catalog is the book the session read, if any.
+func (s *Session) Catalog() *BookCatalog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.catalog
+}
+
+// Chapters are the chapters downloaded so far.
+func (s *Session) Chapters() []Chapter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chapters
+}
+
+// Next is the index of the chapter the run is on.
+func (s *Session) Next() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.next
+}
+
+// LastSaved is the path of the last EPUB written.
+func (s *Session) LastSaved() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSaved
+}
+
+// LastErr is the error that put the session in its failed phase.
+func (s *Session) LastErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastErr
+}
+
+// Progress is the run's snapshot, or nil before a run starts.
+func (s *Session) Progress() *Progress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.progress
+}
+
+// Log is the run's execution log, oldest first.
+func (s *Session) Log() []LogLine {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.log
+}
+
+// Panel is the site's browser.
+func (s *Session) Panel() Panel { return s.panel }
+
+// WantsPanel reports whether the site's page has to be in front of the user:
+// a search that has to run in the browser, or a site that asked for a human.
+//
+// It is derived from the phase, not set by a callback, so the window can ask
+// it on every frame and get the same answer.
+func (s *Session) WantsPanel() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch s.phase {
+	case PhaseSearching:
+		return true
+	case PhaseFailed:
+		return s.lastErr != nil && needsManualVerification(s.lastErr)
+	}
+	return false
+}
+
+// CanPause reports whether the running download can be paused.
+func (s *Session) CanPause() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.phase == PhaseDownloading
+}
+
+// CanResume reports whether a paused or failed download can continue.
+func (s *Session) CanResume() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.canResumeLocked()
+}
+
+func (s *Session) canResumeLocked() bool {
+	if s.catalog == nil || s.cancel != nil {
 		return false
 	}
-	return strings.EqualFold(ua.Host, ub.Host) && strings.TrimSuffix(ua.Path, "/") == strings.TrimSuffix(ub.Path, "/")
+	if s.phase != PhasePaused && s.phase != PhaseFailed {
+		return false
+	}
+	return s.next < len(s.catalog.Chapters)
 }
 
-func fileNameOf(page string) string {
-	u := mustParseURL(page)
-	if u.Path == "" {
-		return u.Host
+// CanSkip reports whether the failed chapter can be dropped and the run
+// continued.
+func (s *Session) CanSkip() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.canSkipLocked()
+}
+
+func (s *Session) canSkipLocked() bool {
+	return s.phase == PhaseFailed && s.catalog != nil && s.next < len(s.catalog.Chapters)
+}
+
+// CanStart reports whether the catalog is ready and the run has not begun.
+func (s *Session) CanStart() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.canStartLocked()
+}
+
+func (s *Session) canStartLocked() bool {
+	return s.catalog != nil && s.phase == PhaseCatalogReady
+}
+
+// CanExport reports whether what is downloaded can be written as an EPUB.
+func (s *Session) CanExport() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.canExportLocked()
+}
+
+func (s *Session) canExportLocked() bool {
+	return len(s.chapters) > 0 && !s.phase.Busy()
+}
+
+// HasResults reports whether a search found books to show.
+func (s *Session) HasResults() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.phase == PhaseIdle && len(s.hits) > 0
+}
+
+// setPhaseLocked moves the session to a phase and records what it means. Every
+// transition goes through here, so no field can disagree with the phase.
+func (s *Session) setPhaseLocked(phase Phase, message, detail string) {
+	s.phase = phase
+	s.message = message
+	s.detail = detail
+	if !phase.Busy() {
+		s.cancel = nil
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	return parts[len(parts)-1]
+}
+
+// failLocked records an error and the phase it leaves the session in.
+func (s *Session) failLocked(err error) {
+	s.lastErr = err
+	s.setPhaseLocked(PhaseFailed, err.Error(), "")
+}
+
+// resetLocked forgets the book and its chapters, and stops whatever was
+// running.
+func (s *Session) resetLocked() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cancel = nil
+	s.stopping.Store(false)
+	s.catalog = nil
+	s.chapters = nil
+	s.next = 0
+	s.recordID = ""
+	s.lastSaved = ""
+	s.lastErr = nil
+	s.progress = nil
+	s.startedAt = time.Time{}
+	s.startCount = 0
+	s.setPhaseLocked(PhaseIdle, "", "")
+}
+
+// adopt switches the site, keeping the address when it already belongs to the
+// new one.
+func (s *Session) adopt(source Source) {
+	s.mu.Lock()
+	s.adoptLocked(source)
+	s.mu.Unlock()
+}
+
+func (s *Session) adoptLocked(source Source) {
+	if source.Kind == s.source.Kind {
+		return
+	}
+	s.source = source
+	if s.source.CatalogURL(s.input) == nil {
+		s.input = ""
+	}
+	s.resetLocked()
+	if s.panel != nil {
+		s.panel.Configure(source)
+	}
+}
+
+// statusDetail is the explanation under the status headline.
+func (s *Session) statusDetail() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.statusDetailLocked()
+}
+
+func (s *Session) statusDetailLocked() string {
+	switch s.phase {
+	case PhaseIdle:
+		return s.source.IdleDetail
+	case PhaseSearching:
+		return fmt.Sprintf("正在 %s 搜索「%s」。站点要验证时，在浏览器面板里完成。", s.source.Name, trimParagraph(s.input))
+	case PhaseParsing:
+		return "正在读取目录和章节信息。"
+	case PhaseCatalogReady, PhasePaused, PhaseFinished, PhaseStopped, PhaseFailed:
+		if s.detail != "" {
+			return s.detail
+		}
+		return s.message
+	case PhaseDownloading:
+		if s.progress == nil {
+			return "正在下载章节。"
+		}
+		p := s.progress
+		text := fmt.Sprintf("已完成 %d / %d 章。\n正在处理：第 %d 章《%s》\n当前方式：%s",
+			p.Completed, p.Total, p.CurrentIndex, p.CurrentTitle, p.Transport.Title())
+		if p.HasLast {
+			text += fmt.Sprintf("\n最近完成：第 %d 章《%s》", p.LastIndex, p.LastTitle)
+		}
+		return text + "\n" + p.Transport.Detail()
+	case PhaseBuilding:
+		return "正在写入目录、章节 XHTML 和 OPF 文件。"
+	}
+	return ""
+}
+
+// reset is the test-facing reset.
+func (s *Session) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resetLocked()
+}
+
+// setPhase is the test-facing phase setter: it takes the lock and records the
+// phase the way every transition does.
+func (s *Session) setPhase(phase Phase, message, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setPhaseLocked(phase, message, detail)
+}
+
+// logf is the test-facing log append.
+func (s *Session) logf(kind LogKind, text, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logfLocked(kind, text, detail)
+}
+
+// logReset is the test-facing log reset.
+func (s *Session) logReset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logResetLocked()
+}
+
+// needsManualVerification reports whether the error means the user has to
+// solve the site's challenge in the browser panel.
+func needsManualVerification(err error) bool {
+	var sessionErr SessionError
+	if errors.As(err, &sessionErr) {
+		return true
+	}
+	message := err.Error()
+	for _, token := range []string{"Cloudflare", "挑战页", "站点拦截", "完成验证", "站点 Cookie"} {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// lastTitle is the title of the newest downloaded chapter.
+func lastTitle(chapters []Chapter) string {
+	if len(chapters) == 0 {
+		return ""
+	}
+	return chapters[len(chapters)-1].Title
+}
+
+// lastOrder is the order of the newest downloaded chapter.
+func lastOrder(chapters []Chapter) int {
+	if len(chapters) == 0 {
+		return 0
+	}
+	return chapters[len(chapters)-1].Order
+}
+
+// nextTitle is the title of the chapter at an index.
+func nextTitle(catalog BookCatalog, next int) string {
+	if next >= 0 && next < len(catalog.Chapters) {
+		return catalog.Chapters[next].Title
+	}
+	if len(catalog.Chapters) > 0 {
+		return catalog.Chapters[len(catalog.Chapters)-1].Title
+	}
+	return "未命名章节"
+}
+
+// nextOrder is the order of the chapter at an index.
+func nextOrder(catalog BookCatalog, next int) int {
+	if next >= 0 && next < len(catalog.Chapters) {
+		return catalog.Chapters[next].Order
+	}
+	return max(len(catalog.Chapters), 1)
 }

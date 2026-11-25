@@ -147,25 +147,69 @@ type HistoryRecord struct {
 	Chapters      []Chapter      `json:"chapters"`
 }
 
+// Summary is the record without its chapters: what the history list reads, so
+// opening the list never deserializes a whole book.
+func (r HistoryRecord) Summary() HistorySummary {
+	return HistorySummary{
+		ID:            r.ID,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		LastExported:  r.LastExported,
+		ExportName:    r.ExportName,
+		Title:         r.Title,
+		Author:        r.Author,
+		SourceURL:     r.SourceURL,
+		TotalChapters: r.TotalChapters,
+		Downloaded:    len(r.Chapters),
+	}
+}
+
+// HistorySummary is one row of the history list.
+type HistorySummary struct {
+	ID            string     `json:"id"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	LastExported  *time.Time `json:"lastExportedAt,omitempty"`
+	ExportName    string     `json:"lastExportFileName,omitempty"`
+	Title         string     `json:"title"`
+	Author        string     `json:"author"`
+	SourceURL     string     `json:"sourceURL"`
+	TotalChapters int        `json:"totalChapters"`
+	Downloaded    int        `json:"downloaded"`
+}
+
 // Downloaded counts the chapters the record holds.
 func (r HistoryRecord) Downloaded() int { return len(r.Chapters) }
 
 // ProgressLabel is the "done / total" text of the record.
-func (r HistoryRecord) ProgressLabel() string {
-	return strconv.Itoa(len(r.Chapters)) + " / " + strconv.Itoa(r.TotalChapters)
+func (r HistoryRecord) ProgressLabel() string { return progressLabel(len(r.Chapters), r.TotalChapters) }
+
+// ProgressLabel is the "done / total" text of the summary.
+func (s HistorySummary) ProgressLabel() string { return progressLabel(s.Downloaded, s.TotalChapters) }
+
+func progressLabel(done, total int) string {
+	return strconv.Itoa(done) + " / " + strconv.Itoa(total)
 }
 
 // SourceHost is the host of the record's page, shown in its details.
-func (r HistoryRecord) SourceHost() string {
-	u, err := url.Parse(r.SourceURL)
+func (r HistoryRecord) SourceHost() string { return hostOf(r.SourceURL) }
+
+// SourceHost is the host of the summary's page.
+func (s HistorySummary) SourceHost() string { return hostOf(s.SourceURL) }
+
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
-		return r.SourceURL
+		return rawURL
 	}
 	return u.Host
 }
 
 // Complete reports whether every chapter of the book was downloaded.
 func (r HistoryRecord) Complete() bool { return len(r.Chapters) >= r.TotalChapters }
+
+// Complete reports whether the summary covers the whole book.
+func (s HistorySummary) Complete() bool { return s.Downloaded >= s.TotalChapters }
 
 // Transport is how a chapter page was fetched.
 type Transport int
@@ -212,40 +256,45 @@ func (p Progress) Fraction() float64 {
 	return float64(done) / float64(p.Total)
 }
 
-// JobPhase is the step a download is in.
-type JobPhase int
+// Phase is the one state the work is in.
+//
+// Everything the window shows about progress is derived from it. There is no
+// separate "searching" or "running" flag: two flags that both mean "busy" is
+// exactly how the catalog load used to deadlock against itself.
+type Phase int
 
 const (
-	PhaseIdle JobPhase = iota
-	PhaseCatalogReady
-	PhaseSessionRequired
+	PhaseIdle Phase = iota
+	PhaseSearching
 	PhaseParsing
-	PhaseStarting
+	PhaseCatalogReady
 	PhaseDownloading
 	PhasePaused
 	PhaseBuilding
 	PhaseFinished
-	PhaseStopped
 	PhaseFailed
+	PhaseStopped
 )
 
-// JobState is the state of the current work, shown in the status panel.
-type JobState struct {
-	Phase   JobPhase
-	Message string
-	Detail  string
-	Snap    *Progress
+// Busy reports whether the work blocks a new one from starting. It is the only
+// definition of "busy" in the app.
+func (p Phase) Busy() bool {
+	switch p {
+	case PhaseSearching, PhaseParsing, PhaseDownloading, PhaseBuilding:
+		return true
+	}
+	return false
 }
 
 // Title is the headline of the status panel.
-func (j JobState) Title() string {
-	switch j.Phase {
-	case PhaseCatalogReady:
-		return "目录已就绪"
+func (p Phase) Title() string {
+	switch p {
+	case PhaseSearching:
+		return "正在搜索"
 	case PhaseParsing:
 		return "正在解析目录"
-	case PhaseStarting:
-		return "已开始下载"
+	case PhaseCatalogReady:
+		return "目录已就绪"
 	case PhaseDownloading:
 		return "正在下载章节"
 	case PhasePaused:
@@ -258,17 +307,16 @@ func (j JobState) Title() string {
 		return "已停止"
 	case PhaseFailed:
 		return "需要处理"
-	case PhaseSessionRequired:
-		return "等待站点会话"
 	default:
 		return "准备开始"
 	}
 }
 
-// Busy reports whether the app is working on something the user waits for.
-func (j JobState) Busy() bool {
-	switch j.Phase {
-	case PhaseParsing, PhaseStarting, PhaseDownloading, PhaseBuilding:
+// Outcome reports whether the phase is a result the user acts on, rather than
+// work in flight.
+func (p Phase) Outcome() bool {
+	switch p {
+	case PhaseCatalogReady, PhasePaused, PhaseFinished, PhaseFailed, PhaseStopped:
 		return true
 	}
 	return false

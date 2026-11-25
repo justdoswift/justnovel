@@ -33,38 +33,18 @@ type LogLine struct {
 // oldest lines fall off the top; the run's tail is what matters.
 const maxLogLines = 400
 
-// logf appends a line to the run's log. Call it on the UI thread, or through
-// win.Update from the crawler's goroutine.
-func (a *app) logf(kind LogKind, text, detail string) {
-	a.logSeq++
-	a.log = append(a.log, LogLine{Seq: a.logSeq, At: time.Now(), Kind: kind, Text: text, Detail: detail})
-	if len(a.log) > maxLogLines {
-		a.log = a.log[len(a.log)-maxLogLines:]
+// shortDuration formats a duration the way the log's column does.
+func shortDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()+0.5))
 	}
-	// Follow the tail, the way a build log does.
-	a.logState.FollowEnd = true
-}
-
-// logChapter records a chapter the crawler took, with how long it took and
-// how it was fetched.
-func (a *app) logChapter(order int, title string, transport Transport, took time.Duration) {
-	detail := ""
-	if transport == TransportBrowser {
-		detail = "浏览器回退"
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()+0.5))
 	}
-	a.logSeq++
-	a.log = append(a.log, LogLine{
-		Seq: a.logSeq, At: time.Now(), Kind: LogChapter,
-		Text: fmt.Sprintf("%03d  %s", order, title), Detail: detail, Took: took,
-	})
-	if len(a.log) > maxLogLines {
-		a.log = a.log[len(a.log)-maxLogLines:]
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) - hours*60
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
 	}
-	a.logState.FollowEnd = true
-}
-
-// logReset clears the log for a new run.
-func (a *app) logReset() {
-	a.log = nil
-	a.logSeq = 0
+	return fmt.Sprintf("%dh%dm", hours, minutes)
 }

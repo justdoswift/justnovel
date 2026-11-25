@@ -2,7 +2,7 @@
   "name": "JustNovel",
   "slug": "justnovel",
   "identifier": "dev.justnovel.app",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "out": "build",
   "macos": {
     "minimumSystemVersion": "13.0"
@@ -10,7 +10,6 @@
   "updates": {
     "publicKey": "n2m6KYnuZ5wMY6X1ADIx2KdSY0vVjE5+BvL78/5vZsw=",
     "github": "justdoswift/justnovel",
-    "changelog": "CHANGELOG.md",
-    "privateKey": "~/Library/Application Support/mygo/update-keys/mygo-update.key"
+    "changelog": "CHANGELOG.md"
   }
 }

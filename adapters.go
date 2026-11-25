@@ -418,10 +418,11 @@ func piaotianAuthor(html string) string {
 }
 
 func piaotianChapters(html string, base *url.URL) []ChapterRef {
+	// The catalog is scanned whole rather than inside the 正文卷 wrapper: that
+	// wrapper holds nested <div class="list"> blocks, so a non-greedy match on
+	// it stops at the first nested </div> and finds no links at all. The
+	// chapter filter below is what keeps the site's own navigation out.
 	region := html
-	if m, ok := firstMatch(`<div[^>]+class=["'][^"']*centent[^"']*["'][^>]*>(.*?)</div>`, html); ok {
-		region = m
-	}
 	matches := allMatches(`<a[^>]+href=["']([^"']+\.html)["'][^>]*>(.*?)</a>`, region)
 
 	seen := map[string]bool{}

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -115,4 +116,35 @@ func readZipFile(t *testing.T, reader *zip.Reader, name string) string {
 	}
 	t.Fatalf("%s is missing from the archive", name)
 	return ""
+}
+
+// TestBuildEPUBWithACollidingOrder checks a book whose chapters share an order
+// number still makes a valid package: the manifest ids are positions, so they
+// cannot collide.
+func TestBuildEPUBWithACollidingOrder(t *testing.T) {
+	chapters := []Chapter{
+		{Title: "第一章", PlainText: "正文一。", Order: 1},
+		{Title: "第二章", PlainText: "正文二。", Order: 1},
+	}
+	data, err := BuildEPUB(ExportSettings{Title: "一本书", Total: 2, BodyFont: FontSystem}, chapters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opf := readZipFile(t, reader, "OEBPS/content.opf")
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`<item id="([^"]+)"`).FindAllStringSubmatch(opf, -1) {
+		if seen[m[1]] {
+			t.Errorf("duplicate manifest id %q in %s", m[1], opf)
+		}
+		seen[m[1]] = true
+	}
+	for _, want := range []string{`idref="chapter-1"`, `idref="chapter-2"`} {
+		if !strings.Contains(opf, want) {
+			t.Errorf("spine missing %q: %s", want, opf)
+		}
+	}
 }

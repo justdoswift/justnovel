@@ -17,46 +17,63 @@ import (
 )
 
 func main() {
-	app := newApp()
+	// The window is drawn in a light native appearance, so the sidebar's
+	// material, the traffic lights and the white content agree even when the
+	// desktop itself is in dark mode.
+	mygo.Theme.SetSource(mygo.ThemeLight)
 
 	// Checks for a newer release in the background and, from the app menu, on
 	// demand. The window is native UI, so the native updater draws it too.
 	mygo.Use(native.Plugin)
 
 	mygo.App.WhenReady(func() {
-		data, err := mygo.App.Path(mygo.PathUserData)
-		if err == nil {
-			app.history = NewHistory(filepath.Join(data, "history.json"))
+		var history *History
+		if data, err := mygo.App.Path(mygo.PathUserData); err == nil {
+			history = NewHistory(filepath.Join(data, "history"))
 		}
 
 		mygo.App.SetMenu(mainMenu())
 
+		// The window is built before the session, because the session needs
+		// the window to post its updates through. The view is not called until
+		// the window draws, by which point both are set.
+		//
+		window := &app{history: history}
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:           "JustNovel",
-			Width:           1240,
-			Height:          800,
-			MinWidth:        1080,
-			MinHeight:       720,
-			BackgroundColor: "#0a0d12",
-			TitleBarStyle:   mygo.TitleBarHidden,
+			Title:     "JustNovel",
+			Width:     1180,
+			Height:    760,
+			MinWidth:  980,
+			MinHeight: 620,
+			// The view draws its own title bar under the traffic lights, and
+			// the sidebar sits on the window's material.
+			TitleBarStyle:   mygo.TitleBarHiddenInset,
+			Vibrancy:        mygo.VibrancySidebar,
+			BackgroundColor: "#ffffff",
 			Hidden:          true,
-			Content:         ui.View(app.view),
+			Content:         ui.View(window.view),
 		})
-		app.win = win
+		window.win = win
 
-		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#0a0d12"})
+		view, err := win.NewWebView(mygo.WebViewOptions{BackgroundColor: "#ffffff"})
 		if err != nil {
 			log.Fatal(err)
 		}
-		app.session = newBrowserSession(win, view, app.source)
+
+		source := SourceFor(SourceShuba69)
+		panel := newBrowserPanel(win, view, source)
+		session := NewSession(win, panel, history, source)
+		window.session = session
+		window.panel = panel
+
 		// The browser comes forward only when a site demands a human.
-		app.session.OnManual(func() {
-			win.Update(func() {
-				app.showBrowser = true
-				app.awaiting = true
-				app.logf(LogWarn, "需要人工验证", "在浏览器面板完成验证后会自动继续")
+		panel.OnManual(func() {
+			session.update(func() {
+				window.showBrowser = true
+				session.logfLocked(LogWarn, "需要人工验证", "在浏览器面板完成验证后会自动继续")
 			})
 		})
+
 		win.Show()
 	})
 
